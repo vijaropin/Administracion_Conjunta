@@ -1,0 +1,259 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userPath() {
+      return /databases/$(database)/documents/usuarios/$(request.auth.uid);
+    }
+
+    function userExists() {
+      return signedIn() && exists(userPath());
+    }
+
+    function userData() {
+      return get(userPath()).data;
+    }
+
+    function isActiveUser() {
+      return userExists() && userData().activo == true;
+    }
+
+    function userRole() {
+      return userData().tipo;
+    }
+
+    function userConjunto() {
+      return userData().conjuntoId;
+    }
+
+    function isAdmin() { return isActiveUser() && userRole() == 'administrador'; }
+    function isConsejo() { return isActiveUser() && userRole() == 'consejo'; }
+    function isContadora() { return isActiveUser() && userRole() == 'contadora'; }
+    function isSeguridad() { return isActiveUser() && userRole() == 'seguridad'; }
+    function isComite() { return isActiveUser() && userRole() == 'comite_convivencia'; }
+    function isResidente() { return isActiveUser() && userRole() == 'residente'; }
+    function isServicios() { return isActiveUser() && userRole() == 'servicios_generales'; }
+
+    function sameConjuntoId(conjuntoId) {
+      return isActiveUser() && userConjunto() == conjuntoId;
+    }
+
+    function sameConjuntoDoc() {
+      return isActiveUser() && resource.data.conjuntoId == userConjunto();
+    }
+
+    function sameConjuntoReq() {
+      return isActiveUser() && request.resource.data.conjuntoId == userConjunto();
+    }
+
+    function canReadConjuntoData() {
+      return isAdmin() || isConsejo() || isContadora() || isSeguridad() || isComite() || isResidente() || isServicios();
+    }
+
+    function canWriteAdminFinance() {
+      return isAdmin() || isContadora();
+    }
+
+    match /usuarios/{uid} {
+      allow read: if isActiveUser() && (
+        request.auth.uid == uid ||
+        (isAdmin() && resource.data.conjuntoId == userConjunto()) ||
+        (isConsejo() && resource.data.conjuntoId == userConjunto())
+      );
+
+      allow create: if signedIn() && request.auth.uid == uid;
+
+      allow update: if isActiveUser() && (
+        request.auth.uid == uid ||
+        (isAdmin() && request.resource.data.conjuntoId == userConjunto())
+      );
+
+      allow delete: if false;
+    }
+
+    match /conjuntos/{conjuntoId} {
+      allow read: if sameConjuntoId(conjuntoId);
+      allow create: if isAdmin() && request.resource.data.administradorId == request.auth.uid;
+      allow update: if isAdmin() && sameConjuntoId(conjuntoId);
+      allow delete: if false;
+
+      match /consejoMiembros/{miembroId} {
+        allow read: if sameConjuntoId(conjuntoId) && (isAdmin() || isConsejo() || isContadora());
+        allow create, update: if isAdmin() && sameConjuntoId(conjuntoId);
+        allow delete: if false;
+      }
+    }
+
+    match /unidades/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && isAdmin();
+      allow delete: if false;
+    }
+
+    match /zonasComunes/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && isAdmin();
+      allow delete: if false;
+    }
+
+    match /pagos/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && canWriteAdminFinance();
+      allow delete: if false;
+    }
+
+    match /conceptosPago/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && canWriteAdminFinance();
+      allow delete: if false;
+    }
+
+    match /cajasMenores/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && canWriteAdminFinance();
+      allow delete: if false;
+    }
+
+    match /gastosCajaMenor/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && canWriteAdminFinance();
+      allow delete: if false;
+    }
+
+    match /comunicados/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && isAdmin();
+      allow delete: if false;
+    }
+
+    match /asambleas/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && isAdmin();
+      allow delete: if false;
+    }
+
+    match /votaciones/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create: if sameConjuntoReq() && isAdmin();
+      allow update: if sameConjuntoReq() && (isAdmin() || isResidente());
+      allow delete: if false;
+    }
+
+    match /asambleaBitacora/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create: if sameConjuntoReq() && isAdmin();
+      allow update, delete: if false;
+    }
+
+    match /documentos/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && (isAdmin() || isContadora());
+      allow delete: if false;
+    }
+
+    match /carpetasDocumentos/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && (isAdmin() || isContadora());
+      allow delete: if false;
+    }
+
+    match /parqueaderos/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && (isAdmin() || isSeguridad());
+      allow delete: if false;
+    }
+
+    match /vehiculos/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && (isAdmin() || isSeguridad() || isResidente());
+      allow delete: if false;
+    }
+
+    match /asignacionesParqueadero/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && (isAdmin() || isSeguridad());
+      allow delete: if false;
+    }
+
+    match /animales/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && (isAdmin() || isResidente());
+      allow delete: if false;
+    }
+
+    match /visitantes/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && (isAdmin() || isSeguridad() || isResidente());
+      allow delete: if false;
+    }
+
+    match /incidentes/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && (isAdmin() || isSeguridad() || isComite() || isResidente());
+      allow delete: if false;
+    }
+
+    match /reservas/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && (isAdmin() || isResidente() || isSeguridad());
+      allow delete: if false;
+    }
+
+    match /conflictos/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && (isAdmin() || isComite() || isConsejo());
+      allow delete: if false;
+    }
+
+    match /audiencias/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && (isAdmin() || isComite() || isConsejo());
+      allow delete: if false;
+    }
+
+    match /novedadesServicios/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && (isAdmin() || isServicios());
+      allow delete: if false;
+    }
+
+    match /solicitudesImplementos/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && (isAdmin() || isServicios());
+      allow delete: if false;
+    }
+
+    match /tareasServicios/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create, update: if sameConjuntoReq() && (isAdmin() || isServicios());
+      allow delete: if false;
+    }
+
+    match /solicitudesGestion/{id} {
+      allow read: if sameConjuntoDoc() && canReadConjuntoData();
+      allow create: if sameConjuntoReq() && isComite();
+      allow update: if sameConjuntoReq() && (isAdmin() || isConsejo() || isComite());
+      allow delete: if false;
+    }
+
+    match /solicitudesBitacora/{id} {
+      allow read: if sameConjuntoDoc() && (isAdmin() || isConsejo() || isComite() || isContadora());
+      allow create: if sameConjuntoReq() && (isAdmin() || isConsejo() || isComite());
+      allow update, delete: if false;
+    }
+
+    match /notificaciones/{id} {
+      allow read: if isActiveUser() && resource.data.usuarioId == request.auth.uid;
+      allow create: if isActiveUser();
+      allow update: if isActiveUser() && resource.data.usuarioId == request.auth.uid;
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

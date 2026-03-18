@@ -1,0 +1,303 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "pagos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fechaVencimiento", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pagos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "unidadId", "order": "ASCENDING" },
+        { "fieldPath": "fechaVencimiento", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pagos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "residenteId", "order": "ASCENDING" },
+        { "fieldPath": "fechaVencimiento", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "conceptosPago",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "nombre", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "cajasMenores",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fechaAprobacion", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "gastosCajaMenor",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "cajaMenorId", "order": "ASCENDING" },
+        { "fieldPath": "fechaGasto", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "documentos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fechaSubida", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "documentos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "categoria", "order": "ASCENDING" },
+        { "fieldPath": "fechaSubida", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "documentos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "tipo", "order": "ASCENDING" },
+        { "fieldPath": "fechaSubida", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "carpetasDocumentos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "nombre", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "animales",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fechaRegistro", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "animales",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "unidadId", "order": "ASCENDING" },
+        { "fieldPath": "fechaRegistro", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "animales",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "residenteId", "order": "ASCENDING" },
+        { "fieldPath": "fechaRegistro", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "comunicados",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fecha", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "asambleas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fecha", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "asambleaBitacora",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "asambleaId", "order": "ASCENDING" },
+        { "fieldPath": "fecha", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notificaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "usuarioId", "order": "ASCENDING" },
+        { "fieldPath": "fecha", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "conflictos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fechaReporte", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "audiencias",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fecha", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "visitantes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fechaIngreso", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "visitantes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "residenteId", "order": "ASCENDING" },
+        { "fieldPath": "fechaIngreso", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "incidentes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fecha", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "reservas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fecha", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "reservas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "residenteId", "order": "ASCENDING" },
+        { "fieldPath": "fecha", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "parqueaderos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "codigo", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "vehiculos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fechaRegistro", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "vehiculos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "residenteId", "order": "ASCENDING" },
+        { "fieldPath": "fechaRegistro", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "asignacionesParqueadero",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "parqueaderoId", "order": "ASCENDING" },
+        { "fieldPath": "fechaInicio", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "novedadesServicios",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fechaReporte", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "novedadesServicios",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "reportadoPor", "order": "ASCENDING" },
+        { "fieldPath": "fechaReporte", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "solicitudesImplementos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fechaSolicitud", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "solicitudesImplementos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "solicitadoPor", "order": "ASCENDING" },
+        { "fieldPath": "fechaSolicitud", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tareasServicios",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fechaProgramada", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tareasServicios",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "asignadaA", "order": "ASCENDING" },
+        { "fieldPath": "fechaProgramada", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "solicitudesGestion",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fechaSolicitud", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "solicitudesBitacora",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "solicitudId", "order": "ASCENDING" },
+        { "fieldPath": "fecha", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "consejoMiembros",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "activo", "order": "DESCENDING" },
+        { "fieldPath": "fechaRegistro", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -1,0 +1,91 @@
+Metadata-Version: 2.4
+Name: administracion-conjunta-api
+Version: 0.1.0
+Summary: Backend Python para Administracion Conjunta
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi<1.0.0,>=0.116.0
+Requires-Dist: uvicorn[standard]<1.0.0,>=0.35.0
+Requires-Dist: pydantic-settings<3.0.0,>=2.10.0
+Requires-Dist: firebase-admin<8.0.0,>=7.1.0
+Requires-Dist: python-multipart<1.0.0,>=0.0.20
+Provides-Extra: dev
+Requires-Dist: httpx<1.0.0,>=0.28.0; extra == "dev"
+Requires-Dist: pytest<9.0.0,>=8.4.0; extra == "dev"
+Requires-Dist: ruff<1.0.0,>=0.12.0; extra == "dev"
+
+# Backend Python
+
+Este backend es la base de migracion a produccion para `Administracion Conjunta`.
+
+## Objetivo
+
+- Mantener el frontend actual en React/Vite.
+- Mover logica sensible, auditoria, integraciones y validaciones a Python.
+- Reducir dependencia de logica directa en el cliente.
+
+## Stack
+
+- FastAPI
+- Pydantic Settings
+- Firebase Admin SDK
+
+## Estructura
+
+```text
+backend/
+├── app/
+│   ├── api/
+│   │   ├── deps/
+│   │   ├── routes/
+│   │   │   ├── auth.py
+│   │   │   ├── health.py
+│   │   │   └── pagos.py
+│   │   └── router.py
+│   ├── core/
+│   │   ├── config.py
+│   │   └── firebase_admin.py
+│   ├── schemas/
+│   ├── services/
+│   └── main.py
+├── .env.example
+├── Dockerfile
+└── pyproject.toml
+```
+
+## Ejecucion local
+
+```bash
+cd backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e .
+uvicorn app.main:app --reload
+```
+
+## Endpoints iniciales
+
+- `GET /health`
+- `GET /api/v1/health`
+- `GET /api/v1/auth/me`
+- `GET /api/v1/pagos`
+
+## Paso a paso de la fase 2
+
+1. El cliente envia el token Firebase en `Authorization: Bearer <token>`.
+2. El backend valida el token con Firebase Admin.
+3. El backend carga `usuarios/{uid}` para conocer `tipo`, `conjuntoId` y estado del usuario.
+4. El endpoint de pagos filtra por `conjuntoId` y aplica alcance por rol.
+5. Un `residente` solo ve sus pagos; `administrador`, `consejo` y `contadora` ven pagos del conjunto.
+
+## Ejemplo rapido de prueba
+
+```bash
+curl http://localhost:8000/api/v1/auth/me \
+  -H "Authorization: Bearer TU_TOKEN_FIREBASE"
+```
+
+```bash
+curl "http://localhost:8000/api/v1/pagos?limit=20" \
+  -H "Authorization: Bearer TU_TOKEN_FIREBASE"
+```

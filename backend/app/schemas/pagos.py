@@ -1,0 +1,29 @@
+from datetime import datetime
+
+from pydantic import BaseModel, Field
+
+
+class PagoItem(BaseModel):
+    id: str
+    conjunto_id: str = Field(alias="conjuntoId")
+    unidad_id: str = Field(alias="unidadId")
+    residente_id: str = Field(alias="residenteId")
+    concepto: str
+    valor: float
+    fecha_vencimiento: datetime = Field(alias="fechaVencimiento")
+    fecha_pago: datetime | None = Field(default=None, alias="fechaPago")
+    estado: str
+    metodo_pago: str | None = Field(default=None, alias="metodoPago")
+    comprobante: str | None = None
+    mes: int
+    anio: int
+    consecutivo_general: str | None = Field(default=None, alias="consecutivoGeneral")
+    consecutivo_residente: str | None = Field(default=None, alias="consecutivoResidente")
+    aplica_interes_mora: bool | None = Field(default=None, alias="aplicaInteresMora")
+    tasa_interes_mora_mensual: float | None = Field(default=None, alias="tasaInteresMoraMensual")
+    fecha_creacion: datetime | None = Field(default=None, alias="fechaCreacion")
+
+
+class PagosListResponse(BaseModel):
+    total: int
+    items: list[PagoItem]

@@ -1,0 +1,66 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return firestore.get(/databases/(default)/documents/usuarios/$(request.auth.uid));
+    }
+
+    function userExists() {
+      return signedIn() && userDoc().data != null;
+    }
+
+    function isActiveUser() {
+      return userExists() && userDoc().data.activo == true;
+    }
+
+    function userRole() {
+      return userDoc().data.tipo;
+    }
+
+    function userConjunto() {
+      return userDoc().data.conjuntoId;
+    }
+
+    function isAdmin() { return isActiveUser() && userRole() == 'administrador'; }
+    function isContadora() { return isActiveUser() && userRole() == 'contadora'; }
+    function isConsejo() { return isActiveUser() && userRole() == 'consejo'; }
+    function isComite() { return isActiveUser() && userRole() == 'comite_convivencia'; }
+    function isSeguridad() { return isActiveUser() && userRole() == 'seguridad'; }
+    function isResidente() { return isActiveUser() && userRole() == 'residente'; }
+    function isServicios() { return isActiveUser() && userRole() == 'servicios_generales'; }
+
+    function sameConjunto(conjuntoId) {
+      return isActiveUser() && userConjunto() == conjuntoId;
+    }
+
+    // Rutas preferidas del proyecto: documentos/{conjuntoId}/..., cajasMenores/{conjuntoId}/..., solicitudesGestion/{conjuntoId}/...
+    match /documentos/{conjuntoId}/{allPaths=**} {
+      allow read: if sameConjunto(conjuntoId);
+      allow write: if sameConjunto(conjuntoId) && (isAdmin() || isContadora());
+    }
+
+    match /cajasMenores/{conjuntoId}/{allPaths=**} {
+      allow read: if sameConjunto(conjuntoId);
+      allow write: if sameConjunto(conjuntoId) && (isAdmin() || isContadora());
+    }
+
+    match /solicitudesGestion/{conjuntoId}/{allPaths=**} {
+      allow read: if sameConjunto(conjuntoId);
+      allow write: if sameConjunto(conjuntoId) && (isAdmin() || isConsejo() || isComite());
+    }
+
+    // Rutas de animales: conjuntos/{conjuntoId}/animales/...
+    match /conjuntos/{conjuntoId}/{allPaths=**} {
+      allow read: if sameConjunto(conjuntoId);
+      allow write: if sameConjunto(conjuntoId) && (isAdmin() || isResidente() || isSeguridad() || isComite() || isServicios() || isContadora());
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
