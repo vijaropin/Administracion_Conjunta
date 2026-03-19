@@ -2,8 +2,13 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.deps.auth import get_current_user
 from app.schemas.auth import AuthenticatedUser
-from app.schemas.pagos import PagoItem, PagosListResponse
-from app.services.pagos import list_pagos_for_user
+from app.schemas.pagos import (
+    GenerarPagosRequest,
+    GenerarPagosResponse,
+    PagoItem,
+    PagosListResponse,
+)
+from app.services.pagos import generate_pagos, list_pagos_for_user
 
 router = APIRouter(prefix="/pagos")
 
@@ -28,3 +33,17 @@ async def list_pagos(
         total=len(items),
         items=[PagoItem.model_validate(item) for item in items],
     )
+
+
+@router.post("/generar", response_model=GenerarPagosResponse)
+async def generar_cuotas(
+    body: GenerarPagosRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> GenerarPagosResponse:
+    result = generate_pagos(
+        current_user=current_user,
+        mes=body.mes,
+        anio=body.anio,
+        permitir_futuro=body.permitir_futuro,
+    )
+    return GenerarPagosResponse(**result)

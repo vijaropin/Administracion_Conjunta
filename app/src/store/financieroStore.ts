@@ -3,6 +3,7 @@ import {
   addDoc,
   collection,
   doc,
+  deleteDoc,
   getDocs,
   orderBy,
   query,
@@ -10,7 +11,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
-import { fetchBackendPagos } from '@/lib/backend';
+import { fetchBackendPagos, generarBackendPagos } from '@/lib/backend';
 import type { CajaMenor, ConceptoPagoConfig, GastoCajaMenor, Pago } from '@/types';
 
 interface FinancieroState {
@@ -29,11 +30,14 @@ interface FinancieroState {
   fetchPagosByResidente: (residenteId: string) => Promise<void>;
   createPago: (pago: Omit<Pago, 'id' | 'consecutivoGeneral' | 'consecutivoResidente' | 'fechaCreacion'>) => Promise<string>;
   updatePago: (id: string, data: Partial<Pago>) => Promise<void>;
-  registrarPago: (id: string, metodoPago: string, comprobante?: string) => Promise<void>;
+  registrarPago: (id: string, metodoPago: string, registradoPor: string, comprobante?: string) => Promise<void>;
+  registrarPagosLote: (ids: string[], metodoPago: string, registradoPor: string) => Promise<void>;
+  generatePagosMes: (conjuntoId: string, mes: number, anio: number, permitirFuturo?: boolean) => Promise<{ creados: number; omitidosDuplicado: number }>;
 
   fetchConceptosPago: (conjuntoId: string) => Promise<void>;
   createConceptoPago: (concepto: Omit<ConceptoPagoConfig, 'id' | 'fechaCreacion' | 'historialActualizaciones'>) => Promise<string>;
   updateConceptoPago: (id: string, data: Partial<ConceptoPago>, actualizadoPor: string, cambios: string) => Promise<void>;
+  deleteConceptoPago: (id: string) => Promise<void>;
 
   fetchCajasMenores: (conjuntoId: string) => Promise<void>;
   fetchGastosCajaMenor: (cajaMenorId: string) => Promise<void>;
@@ -115,11 +119,18 @@ const toLocalDate = (value: unknown): Date => {
   return new Date(value as string);
 };
 
+const toLocalDateOpt = (value: unknown): Date | undefined => (value ? toLocalDate(value) : undefined);
+
+// Firestore no permite enviar valores `undefined` dentro del payload.
+const omitUndefined = <T extends Record<string, unknown>>(obj: T): Partial<T> =>
+  Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
+
 const normalizePago = (pago: Pago): Pago => ({
   ...pago,
   fechaVencimiento: toLocalDate(pago.fechaVencimiento),
   fechaPago: pago.fechaPago ? toLocalDate(pago.fechaPago) : undefined,
   fechaCreacion: pago.fechaCreacion ? toLocalDate(pago.fechaCreacion) : undefined,
+  multaFecha: pago.multaFecha ? toLocalDate(pago.multaFecha) : undefined,
 });
 
 const recalcPagosState = (pagos: Pago[]) => ({
@@ -220,12 +231,13 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
       const consecutivoGeneral = `PG-${String(pagos.length + 1).padStart(7, '0')}`;
       const consecutivoResidente = `PR-${pago.residenteId.slice(0, 4).toUpperCase()}-${String(sameResidenteCount).padStart(5, '0')}`;
 
-      const payload: Omit<Pago, 'id'> = {
+      const payloadRaw: Omit<Pago, 'id'> = {
         ...pago,
         fechaCreacion: new Date(),
         consecutivoGeneral,
         consecutivoResidente,
       };
+      const payload = omitUndefined(payloadRaw as unknown as Record<string, unknown>) as Omit<Pago, 'id'>;
 
       const docRef = await addDoc(collection(db, 'pagos'), payload);
       const next = [{ id: docRef.id, ...payload }, ...pagos];
@@ -248,20 +260,99 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
     }
   },
 
-  registrarPago: async (id, metodoPago: string, comprobante?: string) => {
+  registrarPago: async (id, metodoPago: string, registradoPor: string, comprobante?: string) => {
     set({ loading: true, error: null });
     try {
-      const payload: Pick<Pago, 'estado' | 'metodoPago' | 'comprobante' | 'fechaPago'> = {
+      const pago = get().pagos.find((p) => p.id === id);
+      if (!pago) throw new Error('Pago no encontrado');
+      if (pago.estado === 'pagado') throw new Error('Este pago ya se encuentra registrado');
+
+      const fechaPago = new Date();
+      const now = new Date();
+      const mesActual = now.getMonth() + 1;
+      const anioActual = now.getFullYear();
+
+      // Bloquear pago de cuotas futuras
+      if (pago.anio > anioActual || (pago.anio === anioActual && pago.mes > mesActual)) {
+        throw new Error('No se pueden pagar cuotas futuras');
+      }
+      if (pago.fechaVencimiento && pago.fechaVencimiento > now) {
+        throw new Error('No se pueden pagar cuotas con fecha de vencimiento futura');
+      }
+
+      const diaCorte = 16;
+      const diaPago = fechaPago.getDate();
+
+      const valorOriginalCuota = pago.valorOriginalCuota ?? pago.valor;
+      const tasa = pago.tasaInteresMoraMensual ?? 0;
+      const multaAplicable =
+        diaPago > diaCorte && (pago.aplicaInteresMora ?? false) && typeof tasa === 'number' && tasa > 0;
+
+      const payloadRaw: Partial<Pago> & { estado: Pago['estado'] } = {
         estado: 'pagado',
         metodoPago: metodoPago as Pago['metodoPago'],
         comprobante,
-        fechaPago: new Date(),
+        fechaPago,
       };
-      await updateDoc(doc(db, 'pagos', id), payload as Record<string, unknown>);
+
+      // Evitar campos `undefined` en Firestore
+      const payload: Record<string, unknown> = {};
+      Object.entries(payloadRaw).forEach(([k, v]) => {
+        if (v !== undefined) payload[k] = v;
+      });
+
+      if (multaAplicable && !pago.multaAplicada) {
+        const multaValor = valorOriginalCuota * (tasa / 100);
+        const nuevoValor = valorOriginalCuota + multaValor;
+
+        payload.valor = nuevoValor;
+        payload.multaAplicada = true;
+        payload.multaValor = multaValor;
+        payload.valorOriginalCuota = valorOriginalCuota;
+        payload.multaFecha = fechaPago;
+        payload.multaDiaCorte = diaCorte;
+      }
+
+      // Registrar quien efectuó el pago (historial)
+      payload.registradoPor = registradoPor;
+
+      await updateDoc(doc(db, 'pagos', id), payload);
       const next = get().pagos.map((p) => (p.id === id ? { ...p, ...payload } : p));
       set({ ...recalcPagosState(next), loading: false });
     } catch (error: any) {
       set({ error: error.message, loading: false });
+    }
+  },
+
+  registrarPagosLote: async (ids, metodoPago, registradoPor) => {
+    set({ loading: true, error: null });
+    try {
+      const { registrarPago } = get();
+      for (const id of ids) {
+        try {
+          // reutilizamos la misma lógica/validaciones
+          await registrarPago(id, metodoPago, registradoPor);
+        } catch (err) {
+          console.warn(`Error al registrar pago ${id}:`, err);
+        }
+      }
+      set({ ...recalcPagosState(get().pagos), loading: false });
+    } catch (error: any) {
+      set({ error: error.message, loading: false });
+    }
+  },
+
+  generatePagosMes: async (conjuntoId, mes, anio, permitirFuturo = false) => {
+    set({ loading: true, error: null });
+    try {
+      // Primero intento backend; si falla, se podría implementar fallback a Firestore directo.
+      const result = await generarBackendPagos({ mes, anio, permitirFuturo });
+      await get().fetchPagos(conjuntoId);
+      set({ loading: false });
+      return result;
+    } catch (error: any) {
+      set({ error: error.message, loading: false });
+      throw error;
     }
   },
 
@@ -270,7 +361,15 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
     try {
       const q = query(collection(db, 'conceptosPago'), where('conjuntoId', '==', conjuntoId), orderBy('nombre'));
       const snapshot = await getDocs(q);
-      const conceptos = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as ConceptoPagoConfig));
+      const conceptos = snapshot.docs.map((d) => {
+        const raw = { id: d.id, ...d.data() } as ConceptoPagoConfig;
+        return {
+          ...raw,
+          fechaCreacion: toLocalDate(raw.fechaCreacion),
+          fechaVigenciaDesde: toLocalDateOpt(raw.fechaVigenciaDesde),
+          fechaVigenciaHasta: toLocalDateOpt(raw.fechaVigenciaHasta),
+        };
+      });
 
       if (conceptos.length === 0) {
         const base = defaultConceptos(conjuntoId, 'sistema');
@@ -282,7 +381,15 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
           });
         }
         const seededSnapshot = await getDocs(q);
-        const seeded = seededSnapshot.docs.map((d) => ({ id: d.id, ...d.data() } as ConceptoPagoConfig));
+        const seeded = seededSnapshot.docs.map((d) => {
+          const raw = { id: d.id, ...d.data() } as ConceptoPagoConfig;
+          return {
+            ...raw,
+            fechaCreacion: toLocalDate(raw.fechaCreacion),
+            fechaVigenciaDesde: toLocalDateOpt(raw.fechaVigenciaDesde),
+            fechaVigenciaHasta: toLocalDateOpt(raw.fechaVigenciaHasta),
+          };
+        });
         set({ conceptosPago: seeded, loading: false });
         return;
       }
@@ -296,13 +403,14 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
   createConceptoPago: async (concepto) => {
     set({ loading: true, error: null });
     try {
-      const payload = {
+      const payloadRaw = {
         ...concepto,
         fechaCreacion: new Date(),
         historialActualizaciones: [],
       };
+      const payload = omitUndefined(payloadRaw as unknown as Record<string, unknown>);
       const docRef = await addDoc(collection(db, 'conceptosPago'), payload);
-      const next = [...get().conceptosPago, { id: docRef.id, ...payload } as ConceptoPagoConfig];
+      const next = [...get().conceptosPago, { id: docRef.id, ...(payload as any) } as ConceptoPagoConfig];
       set({ conceptosPago: next, loading: false });
       return docRef.id;
     } catch (error: any) {
@@ -319,7 +427,10 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
         ...(target?.historialActualizaciones ?? []),
         { fecha: new Date(), actualizadoPor, cambios },
       ];
-      const payload = { ...data, historialActualizaciones: historial };
+      const payload = omitUndefined({
+        ...data,
+        historialActualizaciones: historial,
+      } as unknown as Record<string, unknown>);
 
       await updateDoc(doc(db, 'conceptosPago', id), payload as Record<string, unknown>);
       const next = get().conceptosPago.map((c) =>
@@ -328,6 +439,20 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
       set({ conceptosPago: next, loading: false });
     } catch (error: any) {
       set({ error: error.message, loading: false });
+    }
+  },
+
+  deleteConceptoPago: async (id) => {
+    set({ loading: true, error: null });
+    try {
+      await deleteDoc(doc(db, 'conceptosPago', id));
+      set({
+        conceptosPago: get().conceptosPago.filter((c) => c.id !== id),
+        loading: false,
+      });
+    } catch (error: any) {
+      set({ error: error.message, loading: false });
+      throw error;
     }
   },
 
@@ -437,9 +562,6 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
     }
   },
 }));
-
-
-
 
 
 

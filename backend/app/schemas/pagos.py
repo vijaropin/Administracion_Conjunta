@@ -27,3 +27,16 @@ class PagoItem(BaseModel):
 class PagosListResponse(BaseModel):
     total: int
     items: list[PagoItem]
+
+
+class GenerarPagosRequest(BaseModel):
+    mes: int
+    anio: int
+    permitir_futuro: bool = Field(default=False, alias="permitirFuturo")
+
+
+class GenerarPagosResponse(BaseModel):
+    creados: int
+    omitidos_duplicado: int
+    total_unidades: int
+    total_conceptos: int

@@ -460,6 +460,14 @@ export interface Pago {
   consecutivoResidente?: string;
   aplicaInteresMora?: boolean;
   tasaInteresMoraMensual?: number;
+  // Datos de multa/recargo por pago posterior al día 16
+  multaDiaCorte?: number; // fijo: 16
+  multaAplicada?: boolean;
+  multaValor?: number; // valor adicional agregado al total pagado
+  valorOriginalCuota?: number; // valor original de la cuota antes del recargo
+  multaFecha?: Date; // fecha en la que se aplicó la multa (fechaPago)
+  // Usuario que registró el pago
+  registradoPor?: string;
   fechaCreacion?: Date;
 }
 
@@ -480,6 +488,9 @@ export interface ConceptoPagoConfig {
   activo: boolean;
   creadoPor: string;
   fechaCreacion: Date;
+  // Rango de vigencia del concepto (opcional)
+  fechaVigenciaDesde?: Date;
+  fechaVigenciaHasta?: Date;
   historialActualizaciones: ActualizacionConceptoPago[];
 }
 

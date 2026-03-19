@@ -47,3 +47,31 @@ export async function fetchBackendPagos(params?: {
   const data = (await response.json()) as BackendPagosResponse;
   return data.items ?? [];
 }
+
+export async function generarBackendPagos(params: {
+  mes: number;
+  anio: number;
+  permitirFuturo?: boolean;
+}): Promise<{ creados: number; omitidosDuplicado: number }> {
+  const headers = await getAuthHeaders();
+  const url = `${getBackendBaseUrl()}/api/v1/pagos/generar`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      mes: params.mes,
+      anio: params.anio,
+      permitirFuturo: params.permitirFuturo ?? false,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Backend request failed with status ${response.status}`);
+  }
+
+  const data = (await response.json()) as { creados: number; omitidos_duplicado: number };
+  return {
+    creados: data.creados ?? 0,
+    omitidosDuplicado: data.omitidos_duplicado ?? 0,
+  };
+}

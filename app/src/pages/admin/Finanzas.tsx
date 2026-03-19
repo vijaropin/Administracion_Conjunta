@@ -10,6 +10,16 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -65,6 +75,7 @@ export function Finanzas() {
     fetchPagos,
     createPago,
     updatePago,
+    registrarPagosLote,
     fetchConceptosPago,
     createConceptoPago,
     updateConceptoPago,
@@ -73,6 +84,8 @@ export function Finanzas() {
     createCajaMenor,
     cerrarCajaMenor,
     createGastoCajaMenor,
+    deleteConceptoPago,
+    generatePagosMes,
   } = useFinancieroStore();
   const { unidades, fetchUnidades } = useConjuntoStore();
   const { subirArchivo } = useDocumentoStore();
@@ -85,12 +98,15 @@ export function Finanzas() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('todos');
   const [isPagoDialogOpen, setIsPagoDialogOpen] = useState(false);
+  const [isGenerarDialogOpen, setIsGenerarDialogOpen] = useState(false);
   const [isConceptoDialogOpen, setIsConceptoDialogOpen] = useState(false);
   const [isCajaDialogOpen, setIsCajaDialogOpen] = useState(false);
   const [isGastoDialogOpen, setIsGastoDialogOpen] = useState(false);
+  const [selectedPagos, setSelectedPagos] = useState<string[]>([]);
 
   const [newPago, setNewPago] = useState({
     concepto: '',
+    conceptoId: '',
     valor: '',
     unidadId: '',
     mes: new Date().getMonth() + 1,
@@ -105,7 +121,28 @@ export function Finanzas() {
     descripcion: '',
     valorBase: '',
     aplicaInteresMora: false,
+    fechaVigenciaDesde: '',
+    fechaVigenciaHasta: '',
   });
+
+  const [generarLote, setGenerarLote] = useState({
+    mes: new Date().getMonth() + 1,
+    anio: new Date().getFullYear(),
+    permitirFuturo: false,
+  });
+
+  const [isEditarConceptoDialogOpen, setIsEditarConceptoDialogOpen] = useState(false);
+  const [conceptoEditando, setConceptoEditando] = useState<{
+    id: string;
+    nombre: string;
+    descripcion: string;
+    valorBase: string;
+    aplicaInteresMora: boolean;
+    fechaVigenciaDesde: string;
+    fechaVigenciaHasta: string;
+  } | null>(null);
+
+  const [conceptoAEliminar, setConceptoAEliminar] = useState<{ id: string; nombre: string } | null>(null);
 
   const [newCaja, setNewCaja] = useState({ montoAprobado: '', fechaAprobacion: '', observaciones: '' });
   const [newGasto, setNewGasto] = useState({ concepto: '', valor: '', fechaGasto: '', soporteNombre: '' });
@@ -136,6 +173,9 @@ export function Finanzas() {
     });
   }, [pagos, searchTerm, filterStatus]);
 
+  const todosSeleccionados =
+    filteredPagos.length > 0 && filteredPagos.every((p) => selectedPagos.includes(p.id));
+
   const totalRecaudado = pagosPagados.reduce((sum, p) => sum + p.valor, 0);
   const totalPendiente = pagosPendientes.reduce((sum, p) => sum + p.valor, 0);
   const totalMora = pagosMora.reduce((sum, p) => sum + p.valor, 0);
@@ -146,8 +186,33 @@ export function Finanzas() {
     { name: 'En Mora', value: totalMora },
   ];
 
-  const conceptoSeleccionado = conceptosPago.find((c) => c.nombre === newPago.concepto);
+  const conceptoSeleccionado = conceptosPago.find((c) => c.id === newPago.conceptoId);
   const cajaActiva = cajasMenores.find((c) => c.estado === 'abierta') ?? cajasMenores[0];
+
+  const conceptosDisponiblesParaPago = useMemo(() => {
+    const ahora = new Date();
+    return conceptosPago.filter((c) => {
+      if (!c.activo) return false;
+      if (c.fechaVigenciaDesde) {
+        const desde = new Date(c.fechaVigenciaDesde);
+        if (ahora < desde) return false;
+      }
+      if (c.fechaVigenciaHasta) {
+        const hasta = new Date(c.fechaVigenciaHasta);
+        if (ahora > hasta) return false;
+      }
+      return true;
+    });
+  }, [conceptosPago]);
+
+  const conceptoCountPorNombre = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const c of conceptosPago) {
+      const key = c.nombre.trim().toLowerCase();
+      map.set(key, (map.get(key) || 0) + 1);
+    }
+    return map;
+  }, [conceptosPago]);
 
   const gastosPorCaja = useMemo(() => {
     const map = new Map<string, number>();
@@ -164,24 +229,29 @@ export function Finanzas() {
 
   const handleCreatePago = async () => {
     if (!user?.conjuntoId || !canWrite) return;
+    const unidadSeleccionada = unidades.find((u) => u.id === newPago.unidadId);
+    const residenteId = unidadSeleccionada?.residenteId ?? newPago.unidadId;
 
     await createPago({
       conjuntoId: user.conjuntoId,
       concepto: newPago.concepto,
       valor: parseFloat(newPago.valor),
       unidadId: newPago.unidadId,
-      residenteId: newPago.unidadId,
+      residenteId,
       mes: newPago.mes,
       anio: newPago.anio,
       fechaVencimiento: new Date(newPago.fechaVencimiento),
       estado: 'pendiente',
       aplicaInteresMora: newPago.aplicaInteresMora,
-      tasaInteresMoraMensual: newPago.tasaInteresMoraMensual ? parseFloat(newPago.tasaInteresMoraMensual) : undefined,
+      ...(newPago.tasaInteresMoraMensual
+        ? { tasaInteresMoraMensual: parseFloat(newPago.tasaInteresMoraMensual) }
+        : {}),
     });
 
     setIsPagoDialogOpen(false);
     setNewPago({
       concepto: '',
+      conceptoId: '',
       valor: '',
       unidadId: '',
       mes: new Date().getMonth() + 1,
@@ -194,7 +264,21 @@ export function Finanzas() {
 
   const handleMarcarPagado = async (pagoId: string) => {
     if (!canWrite) return;
-    await updatePago(pagoId, { estado: 'pagado', fechaPago: new Date() });
+    if (!user?.id) return;
+    await registrarPago(pagoId, 'efectivo', user.id);
+  };
+
+  const handleMarcarPagadoLote = async () => {
+    if (!canWrite || !user?.id) return;
+    if (selectedPagos.length === 0) return;
+    await registrarPagosLote(selectedPagos, 'efectivo', user.id);
+    setSelectedPagos([]);
+  };
+
+  const handleGenerarPagosMes = async () => {
+    if (!user?.conjuntoId) return;
+    await generatePagosMes(user.conjuntoId, generarLote.mes, generarLote.anio, generarLote.permitirFuturo);
+    setIsGenerarDialogOpen(false);
   };
 
   const handleCreateConcepto = async () => {
@@ -202,19 +286,79 @@ export function Finanzas() {
     await createConceptoPago({
       conjuntoId: user.conjuntoId,
       nombre: newConcepto.nombre,
-      descripcion: newConcepto.descripcion,
+      descripcion: newConcepto.descripcion || undefined,
       valorBase: newConcepto.valorBase ? parseFloat(newConcepto.valorBase) : undefined,
       aplicaInteresMora: newConcepto.aplicaInteresMora,
       activo: true,
       creadoPor: user.id,
+      ...(newConcepto.fechaVigenciaDesde
+        ? { fechaVigenciaDesde: new Date(newConcepto.fechaVigenciaDesde) }
+        : {}),
+      ...(newConcepto.fechaVigenciaHasta
+        ? { fechaVigenciaHasta: new Date(newConcepto.fechaVigenciaHasta) }
+        : {}),
     });
     setIsConceptoDialogOpen(false);
-    setNewConcepto({ nombre: '', descripcion: '', valorBase: '', aplicaInteresMora: false });
+    setNewConcepto({
+      nombre: '',
+      descripcion: '',
+      valorBase: '',
+      aplicaInteresMora: false,
+      fechaVigenciaDesde: '',
+      fechaVigenciaHasta: '',
+    });
   };
 
   const handleToggleConcepto = async (conceptoId: string, activo: boolean) => {
     if (!user?.id || !canWrite) return;
     await updateConceptoPago(conceptoId, { activo }, user.id, activo ? 'Reactivación de concepto' : 'Desactivación de concepto');
+  };
+
+  const toInputDate = (value: unknown): string => {
+    if (!value) return '';
+    try {
+      const d =
+        value instanceof Date
+          ? value
+          : typeof value === 'object' && value && 'toDate' in value && typeof (value as any).toDate === 'function'
+            ? (value as any).toDate()
+            : new Date(value as any);
+      if (Number.isNaN(d.getTime())) return '';
+      return d.toISOString().slice(0, 10);
+    } catch {
+      return '';
+    }
+  };
+
+  const handleEditarConcepto = async () => {
+    if (!user?.id || !canWrite || !conceptoEditando) return;
+
+    await updateConceptoPago(
+      conceptoEditando.id,
+      {
+        nombre: conceptoEditando.nombre,
+        descripcion: conceptoEditando.descripcion || undefined,
+        valorBase: conceptoEditando.valorBase ? parseFloat(conceptoEditando.valorBase) : undefined,
+        aplicaInteresMora: conceptoEditando.aplicaInteresMora,
+        ...(conceptoEditando.fechaVigenciaDesde
+          ? { fechaVigenciaDesde: new Date(conceptoEditando.fechaVigenciaDesde) }
+          : {}),
+        ...(conceptoEditando.fechaVigenciaHasta
+          ? { fechaVigenciaHasta: new Date(conceptoEditando.fechaVigenciaHasta) }
+          : {}),
+      },
+      user.id,
+      'Edición de concepto de pago'
+    );
+
+    setIsEditarConceptoDialogOpen(false);
+    setConceptoEditando(null);
+  };
+
+  const handleEliminarConcepto = async () => {
+    if (!canWrite || !conceptoAEliminar) return;
+    await deleteConceptoPago(conceptoAEliminar.id);
+    setConceptoAEliminar(null);
   };
 
   const handleCrearCajaMenor = async () => {
@@ -371,19 +515,25 @@ const descargarExcel = () => {
               <div className="space-y-4 py-2">
                 <div className="space-y-2">
                   <Label>Concepto *</Label>
-                  <Select value={newPago.concepto} onValueChange={(value) => {
-                    const concepto = conceptosPago.find((c) => c.nombre === value);
-                    setNewPago((prev) => ({
-                      ...prev,
-                      concepto: value,
-                      valor: concepto?.valorBase ? String(concepto.valorBase) : prev.valor,
-                      aplicaInteresMora: concepto?.aplicaInteresMora ?? false,
-                    }));
-                  }}>
+                  <Select
+                    value={newPago.conceptoId}
+                    onValueChange={(value) => {
+                      const concepto = conceptosPago.find((c) => c.id === value);
+                      setNewPago((prev) => ({
+                        ...prev,
+                        conceptoId: value,
+                        concepto: concepto?.nombre ?? '',
+                        valor: concepto?.valorBase ? String(concepto.valorBase) : prev.valor,
+                        aplicaInteresMora: concepto?.aplicaInteresMora ?? false,
+                      }));
+                    }}
+                  >
                     <SelectTrigger><SelectValue placeholder="Selecciona concepto" /></SelectTrigger>
                     <SelectContent>
-                      {conceptosPago.filter((c) => c.activo).map((concepto) => (
-                        <SelectItem key={concepto.id} value={concepto.nombre}>{concepto.nombre}</SelectItem>
+                      {conceptosDisponiblesParaPago.map((concepto) => (
+                        <SelectItem key={concepto.id} value={concepto.id}>
+                          {concepto.nombre}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -539,6 +689,22 @@ const descargarExcel = () => {
                       />
                       Aplica interés de mora
                     </label>
+                    <div>
+                      <Label>Vigencia desde (opcional)</Label>
+                      <Input
+                        type="date"
+                        value={newConcepto.fechaVigenciaDesde}
+                        onChange={(e) => setNewConcepto({ ...newConcepto, fechaVigenciaDesde: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label>Vigencia hasta (opcional)</Label>
+                      <Input
+                        type="date"
+                        value={newConcepto.fechaVigenciaHasta}
+                        onChange={(e) => setNewConcepto({ ...newConcepto, fechaVigenciaHasta: e.target.value })}
+                      />
+                    </div>
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setIsConceptoDialogOpen(false)}>
@@ -549,30 +715,186 @@ const descargarExcel = () => {
                 </DialogContent>
               </Dialog>
             )}
+            {canWrite && (
+              <Dialog open={isEditarConceptoDialogOpen} onOpenChange={setIsEditarConceptoDialogOpen}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Editar concepto de pago</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-3 py-2">
+                    <div>
+                      <Label>Nombre</Label>
+                      <Input
+                        value={conceptoEditando?.nombre ?? ''}
+                        onChange={(e) =>
+                          setConceptoEditando((prev) => (prev ? { ...prev, nombre: e.target.value } : prev))
+                        }
+                      />
+                    </div>
+                    <div>
+                      <Label>Descripción</Label>
+                      <Input
+                        value={conceptoEditando?.descripcion ?? ''}
+                        onChange={(e) =>
+                          setConceptoEditando((prev) => (prev ? { ...prev, descripcion: e.target.value } : prev))
+                        }
+                      />
+                    </div>
+                    <div>
+                      <Label>Valor base (opcional)</Label>
+                      <Input
+                        type="number"
+                        value={conceptoEditando?.valorBase ?? ''}
+                        onChange={(e) =>
+                          setConceptoEditando((prev) => (prev ? { ...prev, valorBase: e.target.value } : prev))
+                        }
+                      />
+                    </div>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={conceptoEditando?.aplicaInteresMora ?? false}
+                        onChange={(e) =>
+                          setConceptoEditando((prev) =>
+                            prev ? { ...prev, aplicaInteresMora: e.target.checked } : prev
+                          )
+                        }
+                      />
+                      Aplica interés de mora
+                    </label>
+                    <div>
+                      <Label>Vigencia desde (opcional)</Label>
+                      <Input
+                        type="date"
+                        value={conceptoEditando?.fechaVigenciaDesde ?? ''}
+                        onChange={(e) =>
+                          setConceptoEditando((prev) =>
+                            prev ? { ...prev, fechaVigenciaDesde: e.target.value } : prev
+                          )
+                        }
+                      />
+                    </div>
+                    <div>
+                      <Label>Vigencia hasta (opcional)</Label>
+                      <Input
+                        type="date"
+                        value={conceptoEditando?.fechaVigenciaHasta ?? ''}
+                        onChange={(e) =>
+                          setConceptoEditando((prev) =>
+                            prev ? { ...prev, fechaVigenciaHasta: e.target.value } : prev
+                          )
+                        }
+                      />
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setIsEditarConceptoDialogOpen(false)}>
+                      Cancelar
+                    </Button>
+                    <Button onClick={handleEditarConcepto} disabled={!conceptoEditando}>
+                      Guardar cambios
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
           </CardHeader>
           <CardContent className="space-y-2">
             {conceptosPago.map((concepto) => (
               <div key={concepto.id} className="border rounded-md p-2 text-sm">
                 <div className="flex items-center justify-between">
                   <p className="font-medium">{concepto.nombre}</p>
-                  <Badge variant={concepto.activo ? 'default' : 'secondary'}>{concepto.activo ? 'Activo' : 'Inactivo'}</Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={concepto.activo ? 'default' : 'secondary'}>
+                      {concepto.activo ? 'Activo' : 'Inactivo'}
+                    </Badge>
+                    {(conceptoCountPorNombre.get(concepto.nombre.trim().toLowerCase()) ?? 0) > 1 && (
+                      <Badge variant="destructive" className="text-xs">
+                        Duplicado
+                      </Badge>
+                    )}
+                  </div>
                 </div>
                 <p className="text-xs text-muted-foreground">{concepto.descripcion || 'Sin descripción'}.</p>
                 <p className="text-xs text-muted-foreground">Historial: {concepto.historialActualizaciones?.length || 0} cambios.</p>
                 {canWrite && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-2"
-                    onClick={() => handleToggleConcepto(concepto.id, !concepto.activo)}
-                  >
-                    {concepto.activo ? 'Desactivar' : 'Reactivar'}
-                  </Button>
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 mr-2"
+                      onClick={() => {
+                        setConceptoEditando({
+                          id: concepto.id,
+                          nombre: concepto.nombre,
+                          descripcion: concepto.descripcion ?? '',
+                          valorBase: concepto.valorBase != null ? String(concepto.valorBase) : '',
+                          aplicaInteresMora: concepto.aplicaInteresMora,
+                          fechaVigenciaDesde: toInputDate(concepto.fechaVigenciaDesde),
+                          fechaVigenciaHasta: toInputDate(concepto.fechaVigenciaHasta),
+                        });
+                        setIsEditarConceptoDialogOpen(true);
+                      }}
+                    >
+                      Editar
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-2"
+                      onClick={() => handleToggleConcepto(concepto.id, !concepto.activo)}
+                    >
+                      {concepto.activo ? 'Desactivar' : 'Reactivar'}
+                    </Button>
+                    {(conceptoCountPorNombre.get(concepto.nombre.trim().toLowerCase()) ?? 0) > 1 && (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="mt-2"
+                        onClick={() => setConceptoAEliminar({ id: concepto.id, nombre: concepto.nombre })}
+                      >
+                        Eliminar
+                      </Button>
+                    )}
+                  </>
+                )}
+                {(concepto.fechaVigenciaDesde || concepto.fechaVigenciaHasta) && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Vigencia:{' '}
+                    {concepto.fechaVigenciaDesde ? toInputDate(concepto.fechaVigenciaDesde) : '—'} a{' '}
+                    {concepto.fechaVigenciaHasta ? toInputDate(concepto.fechaVigenciaHasta) : '—'}
+                  </p>
                 )}
               </div>
             ))}
           </CardContent>
         </Card>
+
+        {canWrite && (
+          <AlertDialog
+            open={!!conceptoAEliminar}
+            onOpenChange={(open) => {
+              if (!open) setConceptoAEliminar(null);
+            }}
+          >
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Eliminar concepto</AlertDialogTitle>
+                <AlertDialogDescription>
+                  ¿Está seguro de eliminar el concepto{' '}
+                  <span className="font-semibold">
+                    {conceptoAEliminar?.nombre ?? ''}
+                  </span>
+                  ? Esta acción no se puede deshacer.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                <AlertDialogAction onClick={handleEliminarConcepto}>Sí, eliminar</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
@@ -666,9 +988,67 @@ const descargarExcel = () => {
             <SelectItem value="en_mora">En Mora</SelectItem>
           </SelectContent>
         </Select>
+        {canWrite && (
+          <>
+            <Button onClick={() => setIsGenerarDialogOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Generar cuotas mes
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={selectedPagos.length === 0}
+              onClick={handleMarcarPagadoLote}
+            >
+              <CheckCircle className="h-4 w-4 mr-2" />
+              Marcar pagados ({selectedPagos.length})
+            </Button>
+          </>
+        )}
         <Button variant="outline" onClick={descargarExcel}><Download className="h-4 w-4 mr-2" />Excel</Button>
         <Button variant="outline" onClick={descargarPdf}><Download className="h-4 w-4 mr-2" />PDF</Button>
       </div>
+
+      {canWrite && (
+        <Dialog open={isGenerarDialogOpen} onOpenChange={setIsGenerarDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Generar cuotas mensuales</DialogTitle>
+            </DialogHeader>
+            <div className="grid grid-cols-3 gap-3 py-2">
+              <div>
+                <Label>Mes</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={12}
+                  value={generarLote.mes}
+                  onChange={(e) => setGenerarLote((prev) => ({ ...prev, mes: Number(e.target.value) }))}
+                />
+              </div>
+              <div>
+                <Label>Año</Label>
+                <Input
+                  type="number"
+                  value={generarLote.anio}
+                  onChange={(e) => setGenerarLote((prev) => ({ ...prev, anio: Number(e.target.value) }))}
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm pt-6">
+                <input
+                  type="checkbox"
+                  checked={generarLote.permitirFuturo}
+                  onChange={(e) => setGenerarLote((prev) => ({ ...prev, permitirFuturo: e.target.checked }))}
+                />
+                Permitir meses futuros
+              </label>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsGenerarDialogOpen(false)}>Cancelar</Button>
+              <Button onClick={handleGenerarPagosMes}>Generar</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
 
       <Card>
         <CardHeader><CardTitle>Lista de Pagos</CardTitle></CardHeader>
@@ -677,6 +1057,19 @@ const descargarExcel = () => {
             <table className="w-full">
               <thead>
                 <tr className="border-b">
+                  {canWrite && (
+                    <th className="py-3 px-4">
+                      <input
+                        type="checkbox"
+                        checked={todosSeleccionados}
+                        onChange={(e) =>
+                          setSelectedPagos(
+                            e.target.checked ? filteredPagos.map((p) => p.id) : []
+                          )
+                        }
+                      />
+                    </th>
+                  )}
                   <th className="text-left py-3 px-4 font-medium">Consecutivo</th>
                   <th className="text-left py-3 px-4 font-medium">Concepto</th>
                   <th className="text-left py-3 px-4 font-medium">No. Casa</th>
@@ -689,6 +1082,19 @@ const descargarExcel = () => {
               <tbody>
                 {filteredPagos.map((pago) => (
                   <tr key={pago.id} className="border-b hover:bg-accent/50">
+                    {canWrite && (
+                      <td className="py-3 px-4">
+                        <input
+                          type="checkbox"
+                          checked={selectedPagos.includes(pago.id)}
+                          onChange={(e) =>
+                            setSelectedPagos((prev) =>
+                              e.target.checked ? [...prev, pago.id] : prev.filter((id) => id !== pago.id)
+                            )
+                          }
+                        />
+                      </td>
+                    )}
                     <td className="py-3 px-4 text-xs">
                       <div>{pago.consecutivoGeneral || '-'}</div>
                       <div className="text-muted-foreground">{pago.consecutivoResidente || '-'}</div>
@@ -723,13 +1129,6 @@ const descargarExcel = () => {
     </div>
   );
 }
-
-
-
-
-
-
-
 
 
 

@@ -4,6 +4,7 @@ import { useFinancieroStore } from '@/store/financieroStore';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
   Dialog, 
   DialogContent, 
@@ -31,6 +32,7 @@ export function ResidentePagos() {
   const [selectedPago, setSelectedPago] = useState<Pago | null>(null);
   const [isPagoDialogOpen, setIsPagoDialogOpen] = useState(false);
   const [metodoPago, setMetodoPago] = useState('transferencia');
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (user?.unidad) {
@@ -47,9 +49,33 @@ export function ResidentePagos() {
   const handlePagar = async () => {
     if (!selectedPago) return;
     
-    await registrarPago(selectedPago.id, metodoPago);
-    setIsPagoDialogOpen(false);
-    setSelectedPago(null);
+    try {
+      setError(null);
+
+      if (selectedPago.estado === 'pagado') {
+        setError('Este pago ya fue registrado.');
+        return;
+      }
+
+      const now = new Date();
+      const mesActual = now.getMonth() + 1;
+      const anioActual = now.getFullYear();
+      if (selectedPago.anio > anioActual || (selectedPago.anio === anioActual && selectedPago.mes > mesActual)) {
+        setError('No se pueden pagar cuotas futuras.');
+        return;
+      }
+
+      if (!user?.id) {
+        setError('No se pudo identificar el usuario.');
+        return;
+      }
+
+      await registrarPago(selectedPago.id, metodoPago, user.id);
+      setIsPagoDialogOpen(false);
+      setSelectedPago(null);
+    } catch (e: any) {
+      setError(e?.message ?? 'Error al registrar el pago');
+    }
   };
 
   return (
@@ -180,6 +206,12 @@ export function ResidentePagos() {
             <DialogTitle>Realizar Pago</DialogTitle>
           </DialogHeader>
           <div className="py-4">
+            {error && (
+              <Alert variant="destructive" className="mb-3">
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
             <div className="bg-accent p-4 rounded-lg mb-4">
               <p className="text-sm text-muted-foreground">Concepto</p>
               <p className="font-medium">{selectedPago?.concepto}</p>
