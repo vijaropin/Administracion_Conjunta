@@ -74,7 +74,7 @@ export function Finanzas() {
     gastosCajaMenor,
     fetchPagos,
     createPago,
-    updatePago,
+    registrarPago,
     registrarPagosLote,
     fetchConceptosPago,
     createConceptoPago,
@@ -85,7 +85,6 @@ export function Finanzas() {
     cerrarCajaMenor,
     createGastoCajaMenor,
     deleteConceptoPago,
-    generatePagosMes,
   } = useFinancieroStore();
   const { unidades, fetchUnidades } = useConjuntoStore();
   const { subirArchivo } = useDocumentoStore();
@@ -93,12 +92,14 @@ export function Finanzas() {
   const isAdmin = user?.tipo === 'administrador';
   const isConsejo = user?.tipo === 'consejo';
   const isContadora = user?.tipo === 'contadora';
-  const canWrite = isAdmin || isContadora;
+  const canConfigFinanciera = isAdmin;
+  const canGestionCartera = isAdmin || isContadora;
+  const defaultVigenciaDesde = new Date().toISOString().slice(0, 10);
+  const defaultVigenciaHasta = `${new Date().getFullYear()}-12-31`;
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('todos');
   const [isPagoDialogOpen, setIsPagoDialogOpen] = useState(false);
-  const [isGenerarDialogOpen, setIsGenerarDialogOpen] = useState(false);
   const [isConceptoDialogOpen, setIsConceptoDialogOpen] = useState(false);
   const [isCajaDialogOpen, setIsCajaDialogOpen] = useState(false);
   const [isGastoDialogOpen, setIsGastoDialogOpen] = useState(false);
@@ -121,15 +122,10 @@ export function Finanzas() {
     descripcion: '',
     valorBase: '',
     aplicaInteresMora: false,
-    fechaVigenciaDesde: '',
-    fechaVigenciaHasta: '',
+    fechaVigenciaDesde: defaultVigenciaDesde,
+    fechaVigenciaHasta: defaultVigenciaHasta,
   });
 
-  const [generarLote, setGenerarLote] = useState({
-    mes: new Date().getMonth() + 1,
-    anio: new Date().getFullYear(),
-    permitirFuturo: false,
-  });
 
   const [isEditarConceptoDialogOpen, setIsEditarConceptoDialogOpen] = useState(false);
   const [conceptoEditando, setConceptoEditando] = useState<{
@@ -222,96 +218,150 @@ export function Finanzas() {
     return map;
   }, [gastosCajaMenor]);
 
+  const unidadLabelMap = useMemo(() => {
+    const map = new Map<string, string>();
+    unidades.forEach((u) => {
+      map.set(u.id, `${u.numero}${u.torre ? ` - ${u.torre}` : ''}`);
+    });
+    return map;
+  }, [unidades]);
+
   const handleCerrarCajaMenor = async (cajaId: string) => {
-    if (!user?.id || !canWrite) return;
+    if (!user?.id || !canGestionCartera) return;
     await cerrarCajaMenor(cajaId, user.id);
   };
 
   const handleCreatePago = async () => {
-    if (!user?.conjuntoId || !canWrite) return;
+    if (!user?.conjuntoId || !canConfigFinanciera) return;
     const unidadSeleccionada = unidades.find((u) => u.id === newPago.unidadId);
     const residenteId = unidadSeleccionada?.residenteId ?? newPago.unidadId;
+    const today = new Date();
+    const fechaPagoOportuno = new Date(newPago.fechaVencimiento);
+    if (Number.isNaN(fechaPagoOportuno.getTime()) || fechaPagoOportuno < new Date(today.toDateString())) {
+      window.alert('La fecha de pago oportuno debe ser vigente (hoy o futura).');
+      return;
+    }
+    try {
+      await createPago({
+        conjuntoId: user.conjuntoId,
+        concepto: newPago.concepto,
+        valor: parseFloat(newPago.valor),
+        unidadId: newPago.unidadId,
+        residenteId,
+        mes: newPago.mes,
+        anio: newPago.anio,
+        fechaVencimiento: fechaPagoOportuno,
+        estado: 'pendiente',
+        aplicaInteresMora: newPago.aplicaInteresMora,
+        ...(newPago.tasaInteresMoraMensual
+          ? { tasaInteresMoraMensual: parseFloat(newPago.tasaInteresMoraMensual) }
+          : {}),
+      });
 
-    await createPago({
-      conjuntoId: user.conjuntoId,
-      concepto: newPago.concepto,
-      valor: parseFloat(newPago.valor),
-      unidadId: newPago.unidadId,
-      residenteId,
-      mes: newPago.mes,
-      anio: newPago.anio,
-      fechaVencimiento: new Date(newPago.fechaVencimiento),
-      estado: 'pendiente',
-      aplicaInteresMora: newPago.aplicaInteresMora,
-      ...(newPago.tasaInteresMoraMensual
-        ? { tasaInteresMoraMensual: parseFloat(newPago.tasaInteresMoraMensual) }
-        : {}),
-    });
-
-    setIsPagoDialogOpen(false);
-    setNewPago({
-      concepto: '',
-      conceptoId: '',
-      valor: '',
-      unidadId: '',
-      mes: new Date().getMonth() + 1,
-      anio: new Date().getFullYear(),
-      fechaVencimiento: '',
-      aplicaInteresMora: false,
-      tasaInteresMoraMensual: '',
-    });
+      setIsPagoDialogOpen(false);
+      setNewPago({
+        concepto: '',
+        conceptoId: '',
+        valor: '',
+        unidadId: '',
+        mes: new Date().getMonth() + 1,
+        anio: new Date().getFullYear(),
+        fechaVencimiento: '',
+        aplicaInteresMora: false,
+        tasaInteresMoraMensual: '',
+      });
+    } catch (e: any) {
+      window.alert(e?.message ?? 'No se pudo crear el pago');
+    }
   };
 
   const handleMarcarPagado = async (pagoId: string) => {
-    if (!canWrite) return;
+    if (!canGestionCartera) return;
     if (!user?.id) return;
-    await registrarPago(pagoId, 'efectivo', user.id);
+    const confirma = window.confirm('¿Está seguro de marcar este pago como pagado?');
+    if (!confirma) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const fechaInput = window.prompt('Ingrese la fecha de cruce (YYYY-MM-DD):', today);
+    if (!fechaInput) return;
+    const fechaCruce = new Date(`${fechaInput}T00:00:00`);
+    if (Number.isNaN(fechaCruce.getTime())) {
+      window.alert('Fecha de cruce inválida.');
+      return;
+    }
+    try {
+      await registrarPago(pagoId, 'efectivo', user.id, undefined, fechaCruce);
+      window.alert('Pago registrado correctamente.');
+    } catch (e: any) {
+      window.alert(e?.message ?? 'No se pudo registrar el pago');
+    }
   };
 
   const handleMarcarPagadoLote = async () => {
-    if (!canWrite || !user?.id) return;
+    if (!canGestionCartera || !user?.id) return;
     if (selectedPagos.length === 0) return;
-    await registrarPagosLote(selectedPagos, 'efectivo', user.id);
-    setSelectedPagos([]);
+    const confirma = window.confirm(`¿Está seguro de marcar ${selectedPagos.length} pagos como pagados?`);
+    if (!confirma) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const fechaInput = window.prompt('Ingrese la fecha de cruce para el lote (YYYY-MM-DD):', today);
+    if (!fechaInput) return;
+    const fechaCruce = new Date(`${fechaInput}T00:00:00`);
+    if (Number.isNaN(fechaCruce.getTime())) {
+      window.alert('Fecha de cruce inválida.');
+      return;
+    }
+    try {
+      await registrarPagosLote(selectedPagos, 'efectivo', user.id, fechaCruce);
+      setSelectedPagos([]);
+      window.alert('Pagos registrados correctamente.');
+    } catch (e: any) {
+      window.alert(e?.message ?? 'No se pudo completar el pago masivo');
+    }
   };
 
-  const handleGenerarPagosMes = async () => {
-    if (!user?.conjuntoId) return;
-    await generatePagosMes(user.conjuntoId, generarLote.mes, generarLote.anio, generarLote.permitirFuturo);
-    setIsGenerarDialogOpen(false);
-  };
 
   const handleCreateConcepto = async () => {
-    if (!user?.conjuntoId || !user?.id || !canWrite) return;
-    await createConceptoPago({
-      conjuntoId: user.conjuntoId,
-      nombre: newConcepto.nombre,
-      descripcion: newConcepto.descripcion || undefined,
-      valorBase: newConcepto.valorBase ? parseFloat(newConcepto.valorBase) : undefined,
-      aplicaInteresMora: newConcepto.aplicaInteresMora,
-      activo: true,
-      creadoPor: user.id,
-      ...(newConcepto.fechaVigenciaDesde
-        ? { fechaVigenciaDesde: new Date(newConcepto.fechaVigenciaDesde) }
-        : {}),
-      ...(newConcepto.fechaVigenciaHasta
-        ? { fechaVigenciaHasta: new Date(newConcepto.fechaVigenciaHasta) }
-        : {}),
-    });
-    setIsConceptoDialogOpen(false);
-    setNewConcepto({
-      nombre: '',
-      descripcion: '',
-      valorBase: '',
-      aplicaInteresMora: false,
-      fechaVigenciaDesde: '',
-      fechaVigenciaHasta: '',
-    });
+    if (!user?.conjuntoId || !user?.id || !canConfigFinanciera) return;
+    if (!newConcepto.fechaVigenciaDesde || !newConcepto.fechaVigenciaHasta) {
+      window.alert('Debe definir vigencia desde y hasta para el concepto');
+      return;
+    }
+    try {
+      await createConceptoPago({
+        conjuntoId: user.conjuntoId,
+        nombre: newConcepto.nombre,
+        descripcion: newConcepto.descripcion || undefined,
+        valorBase: newConcepto.valorBase ? parseFloat(newConcepto.valorBase) : undefined,
+        aplicaInteresMora: newConcepto.aplicaInteresMora,
+        activo: true,
+        creadoPor: user.id,
+        ...(newConcepto.fechaVigenciaDesde
+          ? { fechaVigenciaDesde: new Date(newConcepto.fechaVigenciaDesde) }
+          : {}),
+        ...(newConcepto.fechaVigenciaHasta
+          ? { fechaVigenciaHasta: new Date(newConcepto.fechaVigenciaHasta) }
+          : {}),
+      });
+      setIsConceptoDialogOpen(false);
+      setNewConcepto({
+        nombre: '',
+        descripcion: '',
+        valorBase: '',
+        aplicaInteresMora: false,
+        fechaVigenciaDesde: defaultVigenciaDesde,
+        fechaVigenciaHasta: defaultVigenciaHasta,
+      });
+    } catch (e: any) {
+      window.alert(e?.message ?? 'No se pudo crear el concepto');
+    }
   };
 
   const handleToggleConcepto = async (conceptoId: string, activo: boolean) => {
-    if (!user?.id || !canWrite) return;
-    await updateConceptoPago(conceptoId, { activo }, user.id, activo ? 'Reactivación de concepto' : 'Desactivación de concepto');
+    if (!user?.id || !canConfigFinanciera) return;
+    try {
+      await updateConceptoPago(conceptoId, { activo }, user.id, activo ? 'Reactivación de concepto' : 'Desactivación de concepto');
+    } catch (e: any) {
+      window.alert(e?.message ?? 'No se pudo actualizar el estado del concepto');
+    }
   };
 
   const toInputDate = (value: unknown): string => {
@@ -331,52 +381,68 @@ export function Finanzas() {
   };
 
   const handleEditarConcepto = async () => {
-    if (!user?.id || !canWrite || !conceptoEditando) return;
+    if (!user?.id || !canConfigFinanciera || !conceptoEditando) return;
+    if (!conceptoEditando.fechaVigenciaDesde || !conceptoEditando.fechaVigenciaHasta) {
+      window.alert('Debe mantener la vigencia desde y hasta del concepto');
+      return;
+    }
 
-    await updateConceptoPago(
-      conceptoEditando.id,
-      {
-        nombre: conceptoEditando.nombre,
-        descripcion: conceptoEditando.descripcion || undefined,
-        valorBase: conceptoEditando.valorBase ? parseFloat(conceptoEditando.valorBase) : undefined,
-        aplicaInteresMora: conceptoEditando.aplicaInteresMora,
-        ...(conceptoEditando.fechaVigenciaDesde
-          ? { fechaVigenciaDesde: new Date(conceptoEditando.fechaVigenciaDesde) }
-          : {}),
-        ...(conceptoEditando.fechaVigenciaHasta
-          ? { fechaVigenciaHasta: new Date(conceptoEditando.fechaVigenciaHasta) }
-          : {}),
-      },
-      user.id,
-      'Edición de concepto de pago'
-    );
+    try {
+      await updateConceptoPago(
+        conceptoEditando.id,
+        {
+          nombre: conceptoEditando.nombre,
+          descripcion: conceptoEditando.descripcion || undefined,
+          valorBase: conceptoEditando.valorBase ? parseFloat(conceptoEditando.valorBase) : undefined,
+          aplicaInteresMora: conceptoEditando.aplicaInteresMora,
+          ...(conceptoEditando.fechaVigenciaDesde
+            ? { fechaVigenciaDesde: new Date(conceptoEditando.fechaVigenciaDesde) }
+            : {}),
+          ...(conceptoEditando.fechaVigenciaHasta
+            ? { fechaVigenciaHasta: new Date(conceptoEditando.fechaVigenciaHasta) }
+            : {}),
+        },
+        user.id,
+        'Edición de concepto de pago'
+      );
 
-    setIsEditarConceptoDialogOpen(false);
-    setConceptoEditando(null);
+      setIsEditarConceptoDialogOpen(false);
+      setConceptoEditando(null);
+    } catch (e: any) {
+      window.alert(e?.message ?? 'No se pudo editar el concepto');
+    }
   };
 
   const handleEliminarConcepto = async () => {
-    if (!canWrite || !conceptoAEliminar) return;
-    await deleteConceptoPago(conceptoAEliminar.id);
-    setConceptoAEliminar(null);
+    if (!canConfigFinanciera || !conceptoAEliminar) return;
+    try {
+      await deleteConceptoPago(conceptoAEliminar.id);
+      setConceptoAEliminar(null);
+    } catch (e: any) {
+      window.alert(e?.message ?? 'No se pudo eliminar el concepto');
+    }
   };
 
   const handleCrearCajaMenor = async () => {
-    if (!user?.conjuntoId || !user?.id || !canWrite) return;
-    await createCajaMenor({
-      conjuntoId: user.conjuntoId,
-      montoAprobado: parseFloat(newCaja.montoAprobado),
-      fechaAprobacion: new Date(newCaja.fechaAprobacion),
-      aprobadoPor: user.id,
-      estado: 'abierta',
-      observaciones: newCaja.observaciones || undefined,
-    });
-    setIsCajaDialogOpen(false);
-    setNewCaja({ montoAprobado: '', fechaAprobacion: '', observaciones: '' });
+    if (!user?.conjuntoId || !user?.id || !canGestionCartera) return;
+    try {
+      await createCajaMenor({
+        conjuntoId: user.conjuntoId,
+        montoAprobado: parseFloat(newCaja.montoAprobado),
+        fechaAprobacion: new Date(newCaja.fechaAprobacion),
+        aprobadoPor: user.id,
+        estado: 'abierta',
+        observaciones: newCaja.observaciones || undefined,
+      });
+      setIsCajaDialogOpen(false);
+      setNewCaja({ montoAprobado: '', fechaAprobacion: '', observaciones: '' });
+    } catch (e: any) {
+      window.alert(e?.message ?? 'No se pudo crear la caja menor');
+    }
   };
 
   const handleCrearGasto = async () => {
-    if (!user?.conjuntoId || !user?.id || !cajaActiva || !canWrite) return;
+    if (!user?.conjuntoId || !user?.id || !cajaActiva || !canGestionCartera) return;
 
     let soporteUrl;
     let soporteNombre = newGasto.soporteNombre || undefined;
@@ -387,22 +453,26 @@ export function Finanzas() {
       soporteNombre = gastoSoporteFile.name;
     }
 
-    await createGastoCajaMenor({
-      cajaMenorId: cajaActiva.id,
-      conjuntoId: user.conjuntoId,
-      concepto: newGasto.concepto,
-      valor: parseFloat(newGasto.valor),
-      fechaGasto: new Date(newGasto.fechaGasto),
-      soporteNombre,
-      soporteUrl,
-      registradoPor: user.id,
-    });
-    setIsGastoDialogOpen(false);
-    setNewGasto({ concepto: '', valor: '', fechaGasto: '', soporteNombre: '' });
-    setGastoSoporteFile(null);
+    try {
+      await createGastoCajaMenor({
+        cajaMenorId: cajaActiva.id,
+        conjuntoId: user.conjuntoId,
+        concepto: newGasto.concepto,
+        valor: parseFloat(newGasto.valor),
+        fechaGasto: new Date(newGasto.fechaGasto),
+        soporteNombre,
+        soporteUrl,
+        registradoPor: user.id,
+      });
+      setIsGastoDialogOpen(false);
+      setNewGasto({ concepto: '', valor: '', fechaGasto: '', soporteNombre: '' });
+      setGastoSoporteFile(null);
+    } catch (e: any) {
+      window.alert(e?.message ?? 'No se pudo registrar el gasto');
+    }
   };
 const descargarExcel = () => {
-    const header = ['Consecutivo General', 'Consecutivo Residente', 'Concepto', 'Unidad', 'Residente', 'Valor', 'Estado', 'Fecha Vencimiento'];
+    const header = ['Consecutivo General', 'Consecutivo Residente', 'Concepto', 'Unidad', 'Residente', 'Valor', 'Estado', 'Fecha pago oportuno'];
     const rows = filteredPagos.map((p) => [
       p.consecutivoGeneral || '',
       p.consecutivoResidente || '',
@@ -500,7 +570,7 @@ const descargarExcel = () => {
         </div>
       )}
 
-        {canWrite && (
+        {canConfigFinanciera && (
           <Dialog open={isPagoDialogOpen} onOpenChange={setIsPagoDialogOpen}>
             <DialogTrigger asChild>
               <Button>
@@ -548,14 +618,19 @@ const descargarExcel = () => {
                     <SelectTrigger><SelectValue placeholder="Selecciona casa" /></SelectTrigger>
                     <SelectContent>
                       {unidades.map((u) => (
-                        <SelectItem key={u.id} value={u.numero}>{u.numero} {u.torre ? `- ${u.torre}` : ""}</SelectItem>
+                        <SelectItem key={u.id} value={u.id}>{u.numero} {u.torre ? `- ${u.torre}` : ""}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Fecha de vencimiento *</Label>
-                  <Input type="date" value={newPago.fechaVencimiento} onChange={(e) => setNewPago({ ...newPago, fechaVencimiento: e.target.value })} />
+                  <Label>Fecha de pago oportuno *</Label>
+                  <Input
+                    type="date"
+                    min={new Date().toISOString().slice(0, 10)}
+                    value={newPago.fechaVencimiento}
+                    onChange={(e) => setNewPago({ ...newPago, fechaVencimiento: e.target.value })}
+                  />
                 </div>
                 <div className="flex items-center gap-2">
                   <input
@@ -588,6 +663,15 @@ const descargarExcel = () => {
           <CardContent className="py-4 text-sm text-amber-800 flex items-center gap-2">
             <ShieldCheck className="h-4 w-4" />
             Perfil de Consejo: solo lectura en finanzas. La gestión de pagos la realiza Administrador/Contadora.
+          </CardContent>
+        </Card>
+      )}
+
+      {isContadora && (
+        <Card className="border-blue-200 bg-blue-50/60">
+          <CardContent className="py-4 text-sm text-blue-800 flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4" />
+            Perfil de Contadora: puede cruzar pagos y gestionar cartera. La configuración de tarifas y conceptos es solo del Administrador.
           </CardContent>
         </Card>
       )}
@@ -644,7 +728,7 @@ const descargarExcel = () => {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Conceptos de Pago</CardTitle>
-            {canWrite && (
+            {canConfigFinanciera && (
               <Dialog open={isConceptoDialogOpen} onOpenChange={setIsConceptoDialogOpen}>
                 <DialogTrigger asChild>
                   <Button size="sm">
@@ -690,7 +774,7 @@ const descargarExcel = () => {
                       Aplica interés de mora
                     </label>
                     <div>
-                      <Label>Vigencia desde (opcional)</Label>
+                      <Label>Vigencia desde</Label>
                       <Input
                         type="date"
                         value={newConcepto.fechaVigenciaDesde}
@@ -698,7 +782,7 @@ const descargarExcel = () => {
                       />
                     </div>
                     <div>
-                      <Label>Vigencia hasta (opcional)</Label>
+                      <Label>Vigencia hasta</Label>
                       <Input
                         type="date"
                         value={newConcepto.fechaVigenciaHasta}
@@ -715,7 +799,7 @@ const descargarExcel = () => {
                 </DialogContent>
               </Dialog>
             )}
-            {canWrite && (
+            {canConfigFinanciera && (
               <Dialog open={isEditarConceptoDialogOpen} onOpenChange={setIsEditarConceptoDialogOpen}>
                 <DialogContent>
                   <DialogHeader>
@@ -763,7 +847,7 @@ const descargarExcel = () => {
                       Aplica interés de mora
                     </label>
                     <div>
-                      <Label>Vigencia desde (opcional)</Label>
+                      <Label>Vigencia desde</Label>
                       <Input
                         type="date"
                         value={conceptoEditando?.fechaVigenciaDesde ?? ''}
@@ -775,7 +859,7 @@ const descargarExcel = () => {
                       />
                     </div>
                     <div>
-                      <Label>Vigencia hasta (opcional)</Label>
+                      <Label>Vigencia hasta</Label>
                       <Input
                         type="date"
                         value={conceptoEditando?.fechaVigenciaHasta ?? ''}
@@ -817,7 +901,7 @@ const descargarExcel = () => {
                 </div>
                 <p className="text-xs text-muted-foreground">{concepto.descripcion || 'Sin descripción'}.</p>
                 <p className="text-xs text-muted-foreground">Historial: {concepto.historialActualizaciones?.length || 0} cambios.</p>
-                {canWrite && (
+                {canConfigFinanciera && (
                   <>
                     <Button
                       variant="outline"
@@ -870,7 +954,7 @@ const descargarExcel = () => {
           </CardContent>
         </Card>
 
-        {canWrite && (
+        {canConfigFinanciera && (
           <AlertDialog
             open={!!conceptoAEliminar}
             onOpenChange={(open) => {
@@ -902,7 +986,7 @@ const descargarExcel = () => {
               <Wallet className="h-4 w-4" />
               Caja Menor
             </CardTitle>
-            {canWrite && (
+            {canGestionCartera && (
               <div className="flex gap-2">
                 <Dialog open={isCajaDialogOpen} onOpenChange={setIsCajaDialogOpen}>
                   <DialogTrigger asChild><Button size="sm">Nueva caja</Button></DialogTrigger>
@@ -951,7 +1035,7 @@ const descargarExcel = () => {
                     <div className="flex justify-between"><span>Gastado</span><span>{formatCurrency(gastado)}</span></div>
                     <div className="flex justify-between font-semibold"><span>Saldo</span><span>{formatCurrency(saldo)}</span></div>
                   </div>
-                  {canWrite && caja.estado === 'abierta' && (
+                  {canGestionCartera && caja.estado === 'abierta' && (
                     <Button size="sm" variant="outline" className="mt-2" onClick={() => handleCerrarCajaMenor(caja.id)}>Cerrar mes</Button>
                   )}
                 </div>
@@ -988,67 +1072,19 @@ const descargarExcel = () => {
             <SelectItem value="en_mora">En Mora</SelectItem>
           </SelectContent>
         </Select>
-        {canWrite && (
-          <>
-            <Button onClick={() => setIsGenerarDialogOpen(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              Generar cuotas mes
-            </Button>
-            <Button
-              variant="secondary"
-              disabled={selectedPagos.length === 0}
-              onClick={handleMarcarPagadoLote}
-            >
-              <CheckCircle className="h-4 w-4 mr-2" />
-              Marcar pagados ({selectedPagos.length})
-            </Button>
-          </>
+        {canGestionCartera && (
+          <Button
+            variant="secondary"
+            disabled={selectedPagos.length === 0}
+            onClick={handleMarcarPagadoLote}
+          >
+            <CheckCircle className="h-4 w-4 mr-2" />
+            Marcar pagados ({selectedPagos.length})
+          </Button>
         )}
         <Button variant="outline" onClick={descargarExcel}><Download className="h-4 w-4 mr-2" />Excel</Button>
         <Button variant="outline" onClick={descargarPdf}><Download className="h-4 w-4 mr-2" />PDF</Button>
       </div>
-
-      {canWrite && (
-        <Dialog open={isGenerarDialogOpen} onOpenChange={setIsGenerarDialogOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Generar cuotas mensuales</DialogTitle>
-            </DialogHeader>
-            <div className="grid grid-cols-3 gap-3 py-2">
-              <div>
-                <Label>Mes</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={12}
-                  value={generarLote.mes}
-                  onChange={(e) => setGenerarLote((prev) => ({ ...prev, mes: Number(e.target.value) }))}
-                />
-              </div>
-              <div>
-                <Label>Año</Label>
-                <Input
-                  type="number"
-                  value={generarLote.anio}
-                  onChange={(e) => setGenerarLote((prev) => ({ ...prev, anio: Number(e.target.value) }))}
-                />
-              </div>
-              <label className="flex items-center gap-2 text-sm pt-6">
-                <input
-                  type="checkbox"
-                  checked={generarLote.permitirFuturo}
-                  onChange={(e) => setGenerarLote((prev) => ({ ...prev, permitirFuturo: e.target.checked }))}
-                />
-                Permitir meses futuros
-              </label>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsGenerarDialogOpen(false)}>Cancelar</Button>
-              <Button onClick={handleGenerarPagosMes}>Generar</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
 
       <Card>
         <CardHeader><CardTitle>Lista de Pagos</CardTitle></CardHeader>
@@ -1057,7 +1093,7 @@ const descargarExcel = () => {
             <table className="w-full">
               <thead>
                 <tr className="border-b">
-                  {canWrite && (
+                  {canGestionCartera && (
                     <th className="py-3 px-4">
                       <input
                         type="checkbox"
@@ -1074,15 +1110,17 @@ const descargarExcel = () => {
                   <th className="text-left py-3 px-4 font-medium">Concepto</th>
                   <th className="text-left py-3 px-4 font-medium">No. Casa</th>
                   <th className="text-left py-3 px-4 font-medium">Valor</th>
-                  <th className="text-left py-3 px-4 font-medium">Vencimiento</th>
+                  <th className="text-left py-3 px-4 font-medium">Pago oportuno</th>
+                  <th className="text-left py-3 px-4 font-medium">Fecha pago</th>
                   <th className="text-left py-3 px-4 font-medium">Estado</th>
+                  <th className="text-left py-3 px-4 font-medium">Soporte</th>
                   <th className="text-left py-3 px-4 font-medium">Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredPagos.map((pago) => (
                   <tr key={pago.id} className="border-b hover:bg-accent/50">
-                    {canWrite && (
+                    {canGestionCartera && (
                       <td className="py-3 px-4">
                         <input
                           type="checkbox"
@@ -1100,9 +1138,12 @@ const descargarExcel = () => {
                       <div className="text-muted-foreground">{pago.consecutivoResidente || '-'}</div>
                     </td>
                     <td className="py-3 px-4">{pago.concepto}</td>
-                    <td className="py-3 px-4">{pago.unidadId}</td>
+                    <td className="py-3 px-4">{unidadLabelMap.get(pago.unidadId) ?? pago.unidadId}</td>
                     <td className="py-3 px-4">{formatCurrency(pago.valor)}</td>
                     <td className="py-3 px-4">{new Date(pago.fechaVencimiento).toLocaleDateString('es-CO')}</td>
+                    <td className="py-3 px-4">
+                      {pago.fechaPago ? new Date(pago.fechaPago).toLocaleDateString('es-CO') : '-'}
+                    </td>
                     <td className="py-3 px-4">
                       <Badge variant={pago.estado === 'pagado' ? 'default' : pago.estado === 'en_mora' ? 'destructive' : 'secondary'}>
                         {pago.estado === 'pagado' && <CheckCircle className="h-3 w-3 mr-1" />}
@@ -1112,7 +1153,17 @@ const descargarExcel = () => {
                       </Badge>
                     </td>
                     <td className="py-3 px-4">
-                      {pago.estado !== 'pagado' && canWrite && (
+                      {pago.comprobante ? (
+                        <Button size="sm" variant="ghost" onClick={() => window.open(pago.comprobante, '_blank')}>
+                          <Download className="h-4 w-4 mr-1" />
+                          Ver
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Sin soporte</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      {pago.estado !== 'pagado' && canGestionCartera && (
                         <Button size="sm" variant="outline" onClick={() => handleMarcarPagado(pago.id)}>
                           <CheckCircle className="h-4 w-4 mr-1" />
                           Marcar Pagado
@@ -1129,19 +1180,3 @@ const descargarExcel = () => {
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

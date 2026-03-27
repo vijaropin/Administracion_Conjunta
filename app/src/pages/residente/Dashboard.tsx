@@ -1,12 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { useFinancieroStore } from '@/store/financieroStore';
 import { useComunicacionStore } from '@/store/comunicacionStore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { 
-  DollarSign, 
-  MessageSquare, 
-  Calendar, 
+import {
+  DollarSign,
+  MessageSquare,
+  Calendar,
   Users,
   AlertCircle,
   CheckCircle,
@@ -16,12 +16,15 @@ import { formatCurrency } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useNavigate } from 'react-router-dom';
+import { Textarea } from '@/components/ui/textarea';
 
 export function ResidenteDashboard() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const { pagos, fetchPagosByResidente } = useFinancieroStore();
   const { comunicados, fetchComunicados } = useComunicacionStore();
+  const { createSugerencia } = useComunicacionStore();
+  const [sugerencia, setSugerencia] = useState('');
 
   useEffect(() => {
     if (user?.id) {
@@ -37,31 +40,53 @@ export function ResidenteDashboard() {
   const comunicadosNoLeidos = comunicados.filter(c => !c.leidoPor?.includes(user?.id || ''));
 
   const quickActions = [
-    { 
-      label: 'Ver Mis Pagos', 
-      icon: DollarSign, 
+    {
+      label: 'Ver Mis Pagos',
+      icon: DollarSign,
       onClick: () => navigate('/residente/pagos'),
       color: 'bg-blue-500'
     },
-    { 
-      label: 'Registrar Visitante', 
-      icon: Users, 
+    {
+      label: 'Registrar Visitante',
+      icon: Users,
       onClick: () => navigate('/residente/visitantes'),
       color: 'bg-green-500'
     },
-    { 
-      label: 'Reservar Zona', 
-      icon: Calendar, 
+    {
+      label: 'Reservar Zona',
+      icon: Calendar,
       onClick: () => navigate('/residente/reservas'),
       color: 'bg-purple-500'
     },
-    { 
-      label: 'Reportar Incidente', 
-      icon: AlertCircle, 
+    {
+      label: 'Reportar Incidente',
+      icon: AlertCircle,
       onClick: () => navigate('/residente/incidentes'),
       color: 'bg-orange-500'
     },
   ];
+
+  const handleSendSugerencia = async () => {
+    const contenido = sugerencia.trim();
+    if (!user?.conjuntoId || !contenido) return;
+
+    try {
+      await createSugerencia({
+        conjuntoId: user.conjuntoId,
+        usuarioId: user.id || '',
+        contenido,
+        fecha: new Date(),
+        usuarioNombre: `${user.nombres} ${user.apellidos}`.trim(),
+        usuarioUnidad: user.unidad || undefined,
+        usuarioTorre: user.torre || undefined,
+      });
+
+      setSugerencia('');
+      window.alert('Sugerencia enviada correctamente.');
+    } catch (error: any) {
+      window.alert(error?.message || 'No fue posible enviar la sugerencia. Intenta nuevamente.');
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -104,8 +129,8 @@ export function ResidenteDashboard() {
               {pagosPendientes.length} pagos pendientes
             </p>
             {totalPendiente > 0 && (
-              <Button 
-                size="sm" 
+              <Button
+                size="sm"
                 className="mt-3 w-full"
                 onClick={() => navigate('/residente/pagos')}
               >
@@ -125,8 +150,8 @@ export function ResidenteDashboard() {
             <p className="text-xs text-muted-foreground">
               Sin leer
             </p>
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               variant="outline"
               className="mt-3 w-full"
               onClick={() => navigate('/residente/comunicados')}
@@ -146,8 +171,8 @@ export function ResidenteDashboard() {
             <p className="text-xs text-muted-foreground">
               Reservas activas
             </p>
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               variant="outline"
               className="mt-3 w-full"
               onClick={() => navigate('/residente/reservas')}
@@ -181,7 +206,7 @@ export function ResidenteDashboard() {
                     </div>
                     <div className="text-right">
                       <p className="font-medium">{formatCurrency(pago.valor)}</p>
-                      <Badge 
+                      <Badge
                         variant={pago.estado === 'pagado' ? 'default' : pago.estado === 'en_mora' ? 'destructive' : 'secondary'}
                         className="text-xs"
                       >
@@ -218,7 +243,7 @@ export function ResidenteDashboard() {
                           {comunicado.contenido}
                         </p>
                       </div>
-                      <Badge 
+                      <Badge
                         variant={comunicado.tipo === 'urgente' ? 'destructive' : 'secondary'}
                         className="text-xs"
                       >
@@ -234,6 +259,20 @@ export function ResidenteDashboard() {
             )}
           </CardContent>
         </Card>
+      </div>
+
+      {/* Sugerencias Form */}
+      <div>
+        <h3 className="text-2xl font-bold">Enviar Sugerencia</h3>
+        <Textarea
+          placeholder="Escribe tu sugerencia aquí..."
+          value={sugerencia}
+          onChange={(e) => setSugerencia(e.target.value)}
+          rows={4}
+        />
+        <Button onClick={handleSendSugerencia} className="mt-2">
+          Enviar
+        </Button>
       </div>
     </div>
   );

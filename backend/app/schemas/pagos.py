@@ -21,6 +21,13 @@ class PagoItem(BaseModel):
     consecutivo_residente: str | None = Field(default=None, alias="consecutivoResidente")
     aplica_interes_mora: bool | None = Field(default=None, alias="aplicaInteresMora")
     tasa_interes_mora_mensual: float | None = Field(default=None, alias="tasaInteresMoraMensual")
+    valor_hasta_dia_16: float | None = Field(default=None, alias="valorHastaDia16")
+    valor_desde_dia_17: float | None = Field(default=None, alias="valorDesdeDia17")
+    valor_esperado_pago: float | None = Field(default=None, alias="valorEsperadoPago")
+    multa_dia_corte: int | None = Field(default=None, alias="multaDiaCorte")
+    multa_aplicada: bool | None = Field(default=None, alias="multaAplicada")
+    multa_valor: float | None = Field(default=None, alias="multaValor")
+    valor_original_cuota: float | None = Field(default=None, alias="valorOriginalCuota")
     fecha_creacion: datetime | None = Field(default=None, alias="fechaCreacion")
 
 

@@ -7,6 +7,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from app.schemas.auth import AuthenticatedUser
 
 READ_ROLES = {"administrador", "consejo", "contadora", "residente"}
+GENERATE_ROLES = {"administrador"}
 
 # ============================
 # Lectura de pagos existentes
@@ -66,6 +67,20 @@ def _get_conjunto_config(conjunto_id: str) -> dict:
     return snap.to_dict() or {}
 
 
+def _is_concepto_vigente(concepto: dict, referencia: datetime) -> bool:
+    desde = concepto.get("fechaVigenciaDesde")
+    hasta = concepto.get("fechaVigenciaHasta")
+    if isinstance(desde, datetime) and desde.tzinfo is None:
+        desde = desde.replace(tzinfo=timezone.utc)
+    if isinstance(hasta, datetime) and hasta.tzinfo is None:
+        hasta = hasta.replace(tzinfo=timezone.utc)
+    if isinstance(desde, datetime) and referencia < desde:
+        return False
+    if isinstance(hasta, datetime) and referencia > hasta:
+        return False
+    return True
+
+
 def generate_pagos(
     *,
     current_user: AuthenticatedUser,
@@ -73,10 +88,15 @@ def generate_pagos(
     anio: int,
     permitir_futuro: bool = False,
 ) -> dict:
-    if current_user.tipo not in READ_ROLES:
+    if current_user.tipo not in GENERATE_ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="This role cannot generate payments",
+            detail="Only administrators can generate monthly fees",
+        )
+    if mes < 1 or mes > 12:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El mes debe estar entre 1 y 12",
         )
 
     today = datetime.now(timezone.utc).date()
@@ -102,6 +122,8 @@ def generate_pagos(
         .where(filter=FieldFilter("activo", "==", True))
         .stream()
     ]
+    referencia_periodo = datetime(anio, mes, 1, tzinfo=timezone.utc)
+    conceptos = [c for c in conceptos if _is_concepto_vigente(c, referencia_periodo)]
 
     conjunto_cfg = _get_conjunto_config(current_user.conjunto_id)
     cuota_cfg = (conjunto_cfg or {}).get("cuotaAdministracion") or {}
@@ -109,7 +131,9 @@ def generate_pagos(
 
     creados = 0
     omitidos = 0
-    fecha_vencimiento = datetime(anio, mes, 16, tzinfo=timezone.utc)
+    dia_vencimiento = int(cuota_cfg.get("diaVencimiento") or 16)
+    dia_corte_mora = int(cuota_cfg.get("diaCorteMora") or 16)
+    fecha_vencimiento = datetime(anio, mes, dia_vencimiento, tzinfo=timezone.utc)
 
     for unidad in unidades:
         unidad_id = unidad.get("id")
@@ -132,7 +156,12 @@ def generate_pagos(
 
             valor = concepto.get("valorBase")
             if valor is None:
-                valor = cuota_cfg.get("valorMensual") or 0
+                valor = cuota_cfg.get("valorHastaDia16") or cuota_cfg.get("valorMensual") or 0
+
+            concepto_lower = str(concepto_nombre).lower()
+            es_cuota = "cuota" in concepto_lower and "admin" in concepto_lower
+            valor_hasta_16 = cuota_cfg.get("valorHastaDia16") if es_cuota else None
+            valor_desde_17 = cuota_cfg.get("valorDesdeDia17") if es_cuota else None
 
             payload = {
                 "conjuntoId": current_user.conjunto_id,
@@ -146,6 +175,9 @@ def generate_pagos(
                 "fechaVencimiento": fecha_vencimiento,
                 "aplicaInteresMora": bool(concepto.get("aplicaInteresMora")),
                 "tasaInteresMoraMensual": concepto.get("tasaInteresMoraMensual") or tasa_default,
+                "valorHastaDia16": valor_hasta_16,
+                "valorDesdeDia17": valor_desde_17,
+                "multaDiaCorte": dia_corte_mora,
                 "fechaCreacion": datetime.now(timezone.utc),
             }
 

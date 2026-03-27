@@ -6,6 +6,14 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Clock3, Vote } from 'lucide-react';
 
+const toDate = (value: unknown): Date => {
+  if (value instanceof Date) return value;
+  if (typeof value === 'object' && value && 'toDate' in value && typeof (value as { toDate: () => Date }).toDate === 'function') {
+    return (value as { toDate: () => Date }).toDate();
+  }
+  return new Date(value as string);
+};
+
 export function ResidenteAsambleas() {
   const { user } = useAuthStore();
   const { asambleas, votaciones, fetchAsambleas, fetchVotaciones, votar } = useComunicacionStore();
@@ -25,12 +33,19 @@ export function ResidenteAsambleas() {
   }, [selectedAsambleaId, fetchVotaciones]);
 
   useEffect(() => {
-    if (!selectedAsambleaId && asambleas.length > 0) {
+    if (asambleas.length === 0) {
+      if (selectedAsambleaId) {
+        setSelectedAsambleaId('');
+      }
+      return;
+    }
+
+    if (!selectedAsambleaId || !asambleas.some((asamblea) => asamblea.id === selectedAsambleaId)) {
       setSelectedAsambleaId(asambleas[0].id);
     }
   }, [asambleas, selectedAsambleaId]);
 
-
+  const selectedAsamblea = asambleas.find((asamblea) => asamblea.id === selectedAsambleaId);
   const votacionesAsamblea = useMemo(
     () => votaciones.filter((v) => v.asambleaId === selectedAsambleaId),
     [votaciones, selectedAsambleaId]
@@ -42,7 +57,7 @@ export function ResidenteAsambleas() {
       setVotandoId(votacionId);
       await votar(votacionId, opcion, user.id, user.unidad);
       await fetchVotaciones(selectedAsambleaId);
-    } catch (error) {
+    } catch {
       // error state disponible en store
     } finally {
       setVotandoId('');
@@ -71,7 +86,7 @@ export function ResidenteAsambleas() {
                   <p className="font-medium">{asamblea.titulo}</p>
                   <Badge variant={asamblea.tipo === 'ordinaria' ? 'default' : 'secondary'}>{asamblea.tipo}</Badge>
                 </div>
-                <p className="text-xs text-muted-foreground mt-1">{new Date(asamblea.fecha).toLocaleDateString('es-CO')} • {asamblea.horaInicio} - {asamblea.horaFin}</p>
+                <p className="text-xs text-muted-foreground mt-1">{toDate(asamblea.fecha).toLocaleDateString('es-CO')} • {asamblea.horaInicio} - {asamblea.horaFin}</p>
                 <p className="text-xs text-muted-foreground">Estado: {asamblea.estado}</p>
               </button>
             ))}
@@ -85,9 +100,11 @@ export function ResidenteAsambleas() {
             {!selectedAsambleaId && <p className="text-sm text-muted-foreground">Selecciona una asamblea para votar.</p>}
             {votacionesAsamblea.map((votacion) => {
               const yaVoto = votacion.votantes?.includes(user?.id || '');
-              const fechaCierre = votacion.fechaCierre ? new Date(votacion.fechaCierre) : null;
+              const fechaCierre = votacion.fechaCierre ? toDate(votacion.fechaCierre) : null;
               const vencida = !!fechaCierre && new Date() > fechaCierre;
               const activa = votacion.estado === 'activa' && !vencida;
+              const asambleaHabilitada = selectedAsamblea?.habilitarVotacion === true && selectedAsamblea.estado === 'en_curso';
+              const puedeVotar = asambleaHabilitada && activa && !yaVoto && votandoId !== votacion.id;
               const si = votacion.votos?.SI || 0;
               const no = votacion.votos?.NO || 0;
               const total = si + no;
@@ -110,7 +127,7 @@ export function ResidenteAsambleas() {
                     <Button
                       size="sm"
                       onClick={() => votarOpcion(votacion.id, 'SI')}
-                      disabled={!activa || yaVoto || votandoId === votacion.id}
+                      disabled={!puedeVotar}
                     >
                       SI
                     </Button>
@@ -118,13 +135,19 @@ export function ResidenteAsambleas() {
                       size="sm"
                       variant="outline"
                       onClick={() => votarOpcion(votacion.id, 'NO')}
-                      disabled={!activa || yaVoto || votandoId === votacion.id}
+                      disabled={!puedeVotar}
                     >
                       NO
                     </Button>
                   </div>
 
                   {yaVoto && <p className="text-xs text-green-700">Ya registraste tu voto para este punto.</p>}
+                  {!selectedAsamblea?.habilitarVotacion && (
+                    <p className="text-xs text-muted-foreground">La administración aún no ha habilitado esta asamblea para votación.</p>
+                  )}
+                  {selectedAsamblea?.estado !== 'en_curso' && selectedAsamblea?.habilitarVotacion && (
+                    <p className="text-xs text-muted-foreground">La asamblea no está en curso, por lo tanto la votación permanece bloqueada.</p>
+                  )}
                   {!activa && <p className="text-xs text-muted-foreground">La votación está cerrada o fuera del tiempo permitido.</p>}
                 </div>
               );

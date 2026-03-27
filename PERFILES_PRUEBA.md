@@ -63,6 +63,13 @@ Desde `app/` puedes crear o refrescar estos perfiles automaticamente:
 npm run seed:firebase
 ```
 
+El seed masivo tambien genera estos artefactos para QA manual usuario por usuario:
+
+- `QA_CREDENCIALES_262_CASAS.csv`
+- `QA_CREDENCIALES_262_CASAS.md`
+
+Ambos incluyen correo, clave de prueba, casa y ruta esperada para las 262 viviendas y los perfiles base del sistema.
+
 ## 6) Referencias utiles
 
 - Arquitectura objetivo: `ARQUITECTURA_PYTHON_PRODUCCION.md`

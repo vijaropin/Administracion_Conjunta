@@ -162,24 +162,41 @@ export function AdminConjunto() {
             <CardTitle className="text-sm font-medium">Cuota de administración</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
-            {cuotaAdministracion?.valorMensual ? (
+            {cuotaAdministracion?.valorHastaDia16 || cuotaAdministracion?.valorMensual ? (
               <>
                 <div className="flex justify-between">
-                  <span>Valor mensual</span>
-                  <span className="font-semibold">{formatCurrency(cuotaAdministracion.valorMensual)}</span>
+                  <span>Hasta día 16</span>
+                  <span className="font-semibold">
+                    {formatCurrency(cuotaAdministracion.valorHastaDia16 ?? cuotaAdministracion.valorMensual ?? 0)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Desde día 17</span>
+                  <span className="font-semibold">
+                    {formatCurrency(
+                      cuotaAdministracion.valorDesdeDia17 ??
+                        cuotaAdministracion.valorHastaDia16 ??
+                        cuotaAdministracion.valorMensual ??
+                        0
+                    )}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Corte mora</span>
+                  <span className="font-medium">Día {cuotaAdministracion.diaCorteMora ?? 16}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Vence el día</span>
                   <span className="font-medium">{cuotaAdministracion.diaVencimiento}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>Interés de mora</span>
-                  <span className="font-medium">
-                    {cuotaAdministracion.aplicaInteresMora
-                      ? `${cuotaAdministracion.tasaInteresMoraMensual ?? 0}% mensual`
-                      : 'No aplica'}
-                  </span>
-                </div>
+                {cuotaAdministracion.fechaVigenciaHasta && (
+                  <div className="flex justify-between">
+                    <span>Vigente hasta</span>
+                    <span className="font-medium">
+                      {new Date(cuotaAdministracion.fechaVigenciaHasta as unknown as Date).toLocaleDateString('es-CO')}
+                    </span>
+                  </div>
+                )}
               </>
             ) : (
               <p className="text-muted-foreground">Aún no hay cuota configurada. Regístrala en <span className="font-medium">Configuración</span>.</p>

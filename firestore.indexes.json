@@ -115,6 +115,14 @@
       ]
     },
     {
+      "collectionGroup": "sugerencias",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "conjuntoId", "order": "ASCENDING" },
+        { "fieldPath": "fecha", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "asambleas",
       "queryScope": "COLLECTION",
       "fields": [

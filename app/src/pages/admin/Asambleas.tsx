@@ -22,6 +22,43 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { CheckCircle2, Clock3, Plus, Vote, ShieldCheck, AlertCircle } from 'lucide-react';
+import { toast } from 'sonner';
+
+const toDate = (value: unknown): Date => {
+  if (value instanceof Date) return value;
+  if (typeof value === 'object' && value && 'toDate' in value && typeof (value as { toDate: () => Date }).toDate === 'function') {
+    return (value as { toDate: () => Date }).toDate();
+  }
+  return new Date(value as string);
+};
+
+const normalizeText = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
+
+const sameAsambleaConfig = (
+  asamblea: {
+    titulo: string;
+    fecha: Date;
+    horaInicio: string;
+    horaFin: string;
+    tipo: 'ordinaria' | 'extraordinaria';
+  },
+  form: {
+    titulo: string;
+    fecha: string;
+    horaInicio: string;
+    horaFin: string;
+    tipo: string;
+  }
+) => {
+  const asambleaDate = toDate(asamblea.fecha).toISOString().slice(0, 10);
+  return (
+    normalizeText(asamblea.titulo) === normalizeText(form.titulo) &&
+    asambleaDate === form.fecha &&
+    asamblea.horaInicio === form.horaInicio &&
+    asamblea.horaFin === form.horaFin &&
+    asamblea.tipo === form.tipo
+  );
+};
 
 export function AdminAsambleas() {
   const { user } = useAuthStore();
@@ -41,6 +78,7 @@ export function AdminAsambleas() {
 
   const isAdmin = user?.tipo === 'administrador';
   const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [selectedAsambleaId, setSelectedAsambleaId] = useState<string>('');
   const [form, setForm] = useState({
     titulo: '',
@@ -68,6 +106,19 @@ export function AdminAsambleas() {
     }
   }, [selectedAsambleaId, fetchVotaciones, fetchBitacoraAsamblea]);
 
+  useEffect(() => {
+    if (asambleas.length === 0) {
+      if (selectedAsambleaId) {
+        setSelectedAsambleaId('');
+      }
+      return;
+    }
+
+    if (!selectedAsambleaId || !asambleas.some((asamblea) => asamblea.id === selectedAsambleaId)) {
+      setSelectedAsambleaId(asambleas[0].id);
+    }
+  }, [asambleas, selectedAsambleaId]);
+
   const selectedAsamblea = asambleas.find((a) => a.id === selectedAsambleaId);
   const votacionesAsamblea = useMemo(
     () => votaciones.filter((v) => v.asambleaId === selectedAsambleaId),
@@ -77,70 +128,90 @@ export function AdminAsambleas() {
   const crearAsamblea = async () => {
     if (!user?.conjuntoId || !user?.id || !isAdmin) return;
 
-    const asambleaId = await createAsamblea({
-      conjuntoId: user.conjuntoId,
-      creadoPor: user.id,
-      titulo: form.titulo,
-      descripcion: form.descripcion,
-      fecha: new Date(form.fecha),
-      horaInicio: form.horaInicio,
-      horaFin: form.horaFin,
-      lugar: form.lugar,
-      tipo: form.tipo as 'ordinaria' | 'extraordinaria',
-      estado: 'programada',
-      quorumRequerido: parseInt(form.quorumRequerido, 10),
-      quorumAlcanzado: 0,
-      habilitarVotacion: true,
-      tiempoVotacionMinutos: parseInt(form.tiempoVotacionMinutos, 10),
-      votaciones: [],
-    });
+    const duplicatedAsamblea = asambleas.find((asamblea) => sameAsambleaConfig(asamblea, form));
+    if (duplicatedAsamblea) {
+      setSelectedAsambleaId(duplicatedAsamblea.id);
+      setOpen(false);
+      toast.info('Ya existe una asamblea con esos datos. Se seleccionó el registro existente.');
+      return;
+    }
 
-    const fechaCierre = new Date();
-    fechaCierre.setMinutes(fechaCierre.getMinutes() + parseInt(form.tiempoVotacionMinutos, 10));
+    try {
+      setCreating(true);
+      const asambleaId = await createAsamblea({
+        conjuntoId: user.conjuntoId,
+        creadoPor: user.id,
+        titulo: form.titulo,
+        descripcion: form.descripcion,
+        fecha: new Date(form.fecha),
+        horaInicio: form.horaInicio,
+        horaFin: form.horaFin,
+        lugar: form.lugar,
+        tipo: form.tipo as 'ordinaria' | 'extraordinaria',
+        estado: 'programada',
+        quorumRequerido: parseInt(form.quorumRequerido, 10),
+        quorumAlcanzado: 0,
+        habilitarVotacion: false,
+        tiempoVotacionMinutos: parseInt(form.tiempoVotacionMinutos, 10),
+        votaciones: [],
+      });
 
-    await createVotacion({
-      asambleaId,
-      pregunta: form.pregunta || '¿Aprueba el punto sometido a votación?',
-      opciones: ['SI', 'NO'],
-      votos: { SI: 0, NO: 0 },
-      votantes: [],
-      votosRegistrados: [],
-      estado: 'activa',
-      fechaCierre,
-    });
+      const fechaCierre = new Date();
+      fechaCierre.setMinutes(fechaCierre.getMinutes() + parseInt(form.tiempoVotacionMinutos, 10));
 
-    await updateAsamblea(asambleaId, { estado: 'en_curso' });
+      await createVotacion({
+        conjuntoId: user.conjuntoId,
+        asambleaId,
+        pregunta: form.pregunta || '¿Aprueba el punto sometido a votación?',
+        opciones: ['SI', 'NO'],
+        votos: { SI: 0, NO: 0 },
+        votantes: [],
+        votosRegistrados: [],
+        estado: 'activa',
+        fechaCierre,
+      });
 
-    await registrarEventoAsamblea({
-      asambleaId,
-      usuarioId: user.id,
-      evento: 'creacion_asamblea',
-      detalle: `Asamblea ${form.tipo} creada por administrador`,
-    });
+      await updateAsamblea(asambleaId, { estado: 'en_curso', habilitarVotacion: true });
 
-    await registrarEventoAsamblea({
-      asambleaId,
-      usuarioId: user.id,
-      evento: 'apertura_votacion',
-      detalle: 'Votación SI/NO habilitada para propietarios',
-    });
+      await registrarEventoAsamblea({
+        conjuntoId: user.conjuntoId,
+        asambleaId,
+        usuarioId: user.id,
+        evento: 'creacion_asamblea',
+        detalle: `Asamblea ${form.tipo} creada por administrador`,
+      });
 
-    setOpen(false);
-    setForm({
-      titulo: '',
-      descripcion: '',
-      fecha: '',
-      horaInicio: '18:00',
-      horaFin: '20:00',
-      lugar: 'Salón comunal',
-      tipo: 'ordinaria',
-      quorumRequerido: '100',
-      pregunta: '',
-      tiempoVotacionMinutos: '120',
-    });
+      await registrarEventoAsamblea({
+        conjuntoId: user.conjuntoId,
+        asambleaId,
+        usuarioId: user.id,
+        evento: 'apertura_votacion',
+        detalle: 'Votación SI/NO habilitada para propietarios',
+      });
 
-    await fetchAsambleas(user.conjuntoId);
-    setSelectedAsambleaId(asambleaId);
+      setOpen(false);
+      setForm({
+        titulo: '',
+        descripcion: '',
+        fecha: '',
+        horaInicio: '18:00',
+        horaFin: '20:00',
+        lugar: 'Salón comunal',
+        tipo: 'ordinaria',
+        quorumRequerido: '100',
+        pregunta: '',
+        tiempoVotacionMinutos: '120',
+      });
+
+      await fetchAsambleas(user.conjuntoId);
+      setSelectedAsambleaId(asambleaId);
+      toast.success('La asamblea quedó creada y habilitada para votación.');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'No se pudo crear y habilitar la asamblea.';
+      toast.error(message);
+    } finally {
+      setCreating(false);
+    }
   };
 
   const cerrar = async (votacionId: string) => {
@@ -190,7 +261,9 @@ export function AdminAsambleas() {
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
-                <Button onClick={crearAsamblea} disabled={!form.titulo || !form.fecha}>Crear y habilitar votación</Button>
+                <Button onClick={crearAsamblea} disabled={!form.titulo || !form.fecha || creating}>
+                  {creating ? 'Creando...' : 'Crear y habilitar votación'}
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -223,7 +296,7 @@ export function AdminAsambleas() {
                     <p className="font-medium">{asamblea.titulo}</p>
                     <Badge variant={asamblea.tipo === 'ordinaria' ? 'default' : 'secondary'}>{asamblea.tipo}</Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">{new Date(asamblea.fecha).toLocaleDateString('es-CO')} • {asamblea.lugar}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{toDate(asamblea.fecha).toLocaleDateString('es-CO')} • {asamblea.lugar}</p>
                   <div className="flex items-center gap-2 mt-2 text-xs">
                     <Badge variant={cumpleQuorum ? 'default' : 'destructive'}>
                       {cumpleQuorum ? <CheckCircle2 className="h-3 w-3 mr-1" /> : <AlertCircle className="h-3 w-3 mr-1" />}
@@ -251,7 +324,7 @@ export function AdminAsambleas() {
 
                 {votacionesAsamblea.map((votacion) => {
                   const totalVotos = (votacion.votos?.SI || 0) + (votacion.votos?.NO || 0);
-                  const cierre = votacion.fechaCierre ? new Date(votacion.fechaCierre) : null;
+                  const cierre = votacion.fechaCierre ? toDate(votacion.fechaCierre) : null;
                   return (
                     <div key={votacion.id} className="border rounded-lg p-3 text-sm space-y-2">
                       <p className="font-medium flex items-center gap-2"><Vote className="h-4 w-4" />{votacion.pregunta}</p>
@@ -278,7 +351,7 @@ export function AdminAsambleas() {
                       <div key={e.id} className="border rounded p-2 text-xs">
                         <p className="font-medium">{e.evento}</p>
                         <p className="text-muted-foreground">{e.detalle}</p>
-                        <p className="text-muted-foreground">{new Date(e.fecha).toLocaleString('es-CO')}</p>
+                        <p className="text-muted-foreground">{toDate(e.fecha).toLocaleString('es-CO')}</p>
                       </div>
                     ))}
                     {bitacoraAsamblea.length === 0 && <p className="text-xs text-muted-foreground">Sin eventos.</p>}

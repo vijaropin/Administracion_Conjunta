@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { useFinancieroStore } from '@/store/financieroStore';
+import { useDocumentoStore } from '@/store/documentoStore';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -28,11 +29,13 @@ import type { Pago } from '@/types';
 export function ResidentePagos() {
   const { user } = useAuthStore();
   const { pagos, fetchPagosByResidente, fetchPagosByUnidad, registrarPago } = useFinancieroStore();
+  const { subirArchivo } = useDocumentoStore();
   
   const [selectedPago, setSelectedPago] = useState<Pago | null>(null);
   const [isPagoDialogOpen, setIsPagoDialogOpen] = useState(false);
   const [metodoPago, setMetodoPago] = useState('transferencia');
   const [error, setError] = useState<string | null>(null);
+  const [soportePago, setSoportePago] = useState<File | null>(null);
 
   useEffect(() => {
     if (user?.unidad) {
@@ -70,9 +73,16 @@ export function ResidentePagos() {
         return;
       }
 
-      await registrarPago(selectedPago.id, metodoPago, user.id);
+      let comprobanteUrl: string | undefined;
+      if (soportePago && user?.conjuntoId) {
+        const ruta = `pagos/soportes/${user.conjuntoId}/${selectedPago.id}/${Date.now()}_${soportePago.name}`;
+        comprobanteUrl = await subirArchivo(soportePago, ruta);
+      }
+
+      await registrarPago(selectedPago.id, metodoPago, user.id, comprobanteUrl);
       setIsPagoDialogOpen(false);
       setSelectedPago(null);
+      setSoportePago(null);
     } catch (e: any) {
       setError(e?.message ?? 'Error al registrar el pago');
     }
@@ -183,13 +193,18 @@ export function ResidentePagos() {
                       <p className="text-sm text-muted-foreground">
                         Método: {pago.metodoPago}
                       </p>
+                      <p className="text-sm text-muted-foreground">
+                        Estado de mora: {pago.multaAplicada ? 'Pagó con mora' : 'Pagó al día'}
+                      </p>
                     </div>
                     <div className="text-right">
                       <p className="text-xl font-bold text-green-600">{formatCurrency(pago.valor)}</p>
-                      <Button variant="ghost" size="sm">
-                        <Download className="h-4 w-4 mr-1" />
-                        Recibo
-                      </Button>
+                      {pago.comprobante && (
+                        <Button variant="ghost" size="sm" onClick={() => window.open(pago.comprobante, '_blank')}>
+                          <Download className="h-4 w-4 mr-1" />
+                          Soporte
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </CardContent>
@@ -246,6 +261,15 @@ export function ResidentePagos() {
                 </Button>
               </div>
             </div>
+
+            <div className="space-y-2 mt-4">
+              <label className="text-sm font-medium">Adjuntar soporte (foto o PDF)</label>
+              <input
+                type="file"
+                accept="image/*,.pdf"
+                onChange={(e) => setSoportePago(e.target.files?.[0] || null)}
+              />
+            </div>
           </div>
           <DialogFooter>
             <DialogClose asChild>
@@ -261,4 +285,3 @@ export function ResidentePagos() {
     </div>
   );
 }
-

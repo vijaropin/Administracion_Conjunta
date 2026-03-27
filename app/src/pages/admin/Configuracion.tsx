@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { useConjuntoStore } from '@/store/conjuntoStore';
+import { collection, doc, getDocs, query, updateDoc, where } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -8,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Building2, Save, ShieldCheck } from 'lucide-react';
+import { db } from '@/config/firebase';
 
 interface ConjuntoFormState {
   nombre: string;
@@ -26,12 +28,21 @@ interface ConjuntoFormState {
   cantidadConsejeros: string;
   fechaCreacion: string;
   // Cuota administración (FASE 1B)
-  cuotaValorMensual: string;
+  cuotaValorHastaDia16: string;
+  cuotaValorDesdeDia17: string;
   cuotaDiaVencimiento: string;
-  cuotaAplicaInteresMora: boolean;
-  cuotaTasaInteresMoraMensual: string;
+  cuotaDiaCorteMora: string;
+  cuotaVigenciaHasta: string;
   // Accesos rápidos (FASE 1B)
   accesosRapidosAdmin: string[];
+}
+
+interface SeguridadUsuarioConfig {
+  id: string;
+  nombres: string;
+  apellidos: string;
+  email: string;
+  seguridadPerfil: 'control_acceso' | 'incidentes';
 }
 
 const emptyForm: ConjuntoFormState = {
@@ -50,17 +61,17 @@ const emptyForm: ConjuntoFormState = {
   cantidadApartamentos: '',
   cantidadConsejeros: '',
   fechaCreacion: '',
-  cuotaValorMensual: '',
+  cuotaValorHastaDia16: '',
+  cuotaValorDesdeDia17: '',
   cuotaDiaVencimiento: '10',
-  cuotaAplicaInteresMora: false,
-  cuotaTasaInteresMoraMensual: '',
+  cuotaDiaCorteMora: '16',
+  cuotaVigenciaHasta: '',
   accesosRapidosAdmin: []
 };
 
 const ACCESOS_RAPIDOS_DISPONIBLES: { href: string; label: string }[] = [
   { href: '/admin/dashboard', label: 'Dashboard' },
   { href: '/admin/conjunto', label: 'Mi Conjunto' },
-  { href: '/admin/unidades', label: 'Unidades' },
   { href: '/admin/finanzas', label: 'Finanzas' },
   { href: '/admin/comunicados', label: 'Comunicados' },
   { href: '/admin/seguridad', label: 'Seguridad' },
@@ -84,6 +95,12 @@ export function AdminConfiguracion() {
 
   const [form, setForm] = useState<ConjuntoFormState>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const historialCuotas = (conjuntoActual?.cuotaAdministracionHistorial ?? []).slice().reverse();
+  const [seguridadTarifas, setSeguridadTarifas] = useState({
+    valorParqueaderoVehiculo: '0',
+    valorParqueaderoMoto: '0',
+  });
+  const [seguridadUsuarios, setSeguridadUsuarios] = useState<SeguridadUsuarioConfig[]>([]);
 
   const isAdmin = user?.tipo === 'administrador';
 
@@ -94,7 +111,35 @@ export function AdminConfiguracion() {
   }, [user?.conjuntoId, fetchConjuntoById]);
 
   useEffect(() => {
+    const loadSeguridadUsuarios = async () => {
+      if (!user?.conjuntoId) return;
+      const q = query(
+        collection(db, 'usuarios'),
+        where('conjuntoId', '==', user.conjuntoId),
+        where('tipo', '==', 'seguridad')
+      );
+      const snapshot = await getDocs(q);
+      const rows = snapshot.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          nombres: data.nombres || '',
+          apellidos: data.apellidos || '',
+          email: data.email || '',
+          seguridadPerfil: (data.seguridadPerfil as 'control_acceso' | 'incidentes') || 'control_acceso',
+        };
+      });
+      setSeguridadUsuarios(rows);
+    };
+    void loadSeguridadUsuarios();
+  }, [user?.conjuntoId]);
+
+  useEffect(() => {
     if (conjuntoActual) {
+      setSeguridadTarifas({
+        valorParqueaderoVehiculo: String(conjuntoActual.configuracionSeguridad?.valorParqueaderoVehiculo ?? 0),
+        valorParqueaderoMoto: String(conjuntoActual.configuracionSeguridad?.valorParqueaderoMoto ?? 0),
+      });
       setForm({
         nombre: conjuntoActual.nombre ?? '',
         direccion: conjuntoActual.direccion ?? '',
@@ -113,10 +158,19 @@ export function AdminConfiguracion() {
         fechaCreacion: conjuntoActual.fechaCreacion
           ? new Date(conjuntoActual.fechaCreacion as unknown as Date).toISOString().slice(0, 10)
           : '',
-        cuotaValorMensual: conjuntoActual.cuotaAdministracion?.valorMensual?.toString?.() ?? '',
+        cuotaValorHastaDia16:
+          conjuntoActual.cuotaAdministracion?.valorHastaDia16?.toString?.() ??
+          conjuntoActual.cuotaAdministracion?.valorMensual?.toString?.() ??
+          '',
+        cuotaValorDesdeDia17:
+          conjuntoActual.cuotaAdministracion?.valorDesdeDia17?.toString?.() ??
+          conjuntoActual.cuotaAdministracion?.valorMensual?.toString?.() ??
+          '',
         cuotaDiaVencimiento: conjuntoActual.cuotaAdministracion?.diaVencimiento?.toString?.() ?? '10',
-        cuotaAplicaInteresMora: conjuntoActual.cuotaAdministracion?.aplicaInteresMora ?? false,
-        cuotaTasaInteresMoraMensual: conjuntoActual.cuotaAdministracion?.tasaInteresMoraMensual?.toString?.() ?? '',
+        cuotaDiaCorteMora: conjuntoActual.cuotaAdministracion?.diaCorteMora?.toString?.() ?? '16',
+        cuotaVigenciaHasta: conjuntoActual.cuotaAdministracion?.fechaVigenciaHasta
+          ? new Date(conjuntoActual.cuotaAdministracion.fechaVigenciaHasta as unknown as Date).toISOString().slice(0, 10)
+          : '',
         accesosRapidosAdmin: conjuntoActual.accesosRapidosAdmin ?? []
       });
     } else {
@@ -143,23 +197,66 @@ export function AdminConfiguracion() {
     });
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (scope: 'general' | 'cuotas' | 'accesos' = 'general') => {
     if (!user || !isAdmin) return;
 
     setSaving(true);
     try {
+      const intentaConfigurarCuota = scope === 'cuotas';
+      if (intentaConfigurarCuota) {
+        if (!form.cuotaValorHastaDia16 || !form.cuotaValorDesdeDia17 || !form.cuotaVigenciaHasta) {
+          window.alert('Para guardar la cuota debe diligenciar valor hasta día 16, valor desde día 17 y vigencia hasta.');
+          return;
+        }
+        if (parseFloat(form.cuotaValorDesdeDia17) < parseFloat(form.cuotaValorHastaDia16)) {
+          window.alert('El valor desde día 17 debe ser mayor o igual al valor hasta día 16.');
+          return;
+        }
+      }
+
+      const fechaVigenciaHasta = form.cuotaVigenciaHasta ? new Date(form.cuotaVigenciaHasta) : undefined;
+      const valorHastaDia16 = form.cuotaValorHastaDia16 ? parseFloat(form.cuotaValorHastaDia16) : 0;
+      const valorDesdeDia17 = form.cuotaValorDesdeDia17 ? parseFloat(form.cuotaValorDesdeDia17) : 0;
       const cuotaAdministracion =
-        form.cuotaValorMensual || form.cuotaDiaVencimiento
+        intentaConfigurarCuota
           ? {
-              valorMensual: form.cuotaValorMensual ? parseFloat(form.cuotaValorMensual) : 0,
+              // `valorMensual` se mantiene por compatibilidad con vistas existentes.
+              valorMensual: valorHastaDia16,
+              valorHastaDia16,
+              valorDesdeDia17,
               diaVencimiento: form.cuotaDiaVencimiento ? parseInt(form.cuotaDiaVencimiento, 10) : 10,
-              aplicaInteresMora: form.cuotaAplicaInteresMora,
-              tasaInteresMoraMensual: form.cuotaTasaInteresMoraMensual
-                ? parseFloat(form.cuotaTasaInteresMoraMensual)
-                : undefined,
-              fechaVigenciaDesde: new Date()
+              diaCorteMora: form.cuotaDiaCorteMora ? parseInt(form.cuotaDiaCorteMora, 10) : 16,
+              aplicaInteresMora: true,
+              fechaVigenciaDesde: new Date(),
+              fechaVigenciaHasta
             }
           : undefined;
+
+      const cuotaCambioRelevante =
+        !!cuotaAdministracion &&
+        (
+          conjuntoActual?.cuotaAdministracion?.valorHastaDia16 !== cuotaAdministracion.valorHastaDia16 ||
+          conjuntoActual?.cuotaAdministracion?.valorDesdeDia17 !== cuotaAdministracion.valorDesdeDia17 ||
+          conjuntoActual?.cuotaAdministracion?.diaCorteMora !== cuotaAdministracion.diaCorteMora ||
+          (conjuntoActual?.cuotaAdministracion?.fechaVigenciaHasta
+            ? new Date(conjuntoActual.cuotaAdministracion.fechaVigenciaHasta as unknown as Date).toISOString().slice(0, 10)
+            : '') !== (fechaVigenciaHasta ? fechaVigenciaHasta.toISOString().slice(0, 10) : '')
+        );
+
+      const historialActual = conjuntoActual?.cuotaAdministracionHistorial ?? [];
+      const nuevoRegistroHistorial =
+        cuotaCambioRelevante
+          ? {
+              valorHastaDia16: cuotaAdministracion.valorHastaDia16,
+              valorDesdeDia17: cuotaAdministracion.valorDesdeDia17,
+              diaCorteMora: cuotaAdministracion.diaCorteMora,
+              vigenciaDesde: cuotaAdministracion.fechaVigenciaDesde,
+              vigenciaHasta: cuotaAdministracion.fechaVigenciaHasta ?? new Date(`${new Date().getFullYear()}-12-31`),
+              actualizadoPor: user.id,
+              fechaActualizacion: new Date(),
+              motivo: 'Actualización de tarifa en configuración'
+            }
+          : null;
 
       const payload = {
         nombre: form.nombre || form.nombreConjunto || 'Conjunto residencial',
@@ -182,6 +279,9 @@ export function AdminConfiguracion() {
         cantidadConsejeros: form.cantidadConsejeros ? parseInt(form.cantidadConsejeros, 10) : undefined,
         fechaCreacion: form.fechaCreacion ? new Date(form.fechaCreacion) : conjuntoActual?.fechaCreacion,
         cuotaAdministracion: cuotaAdministracion ?? conjuntoActual?.cuotaAdministracion,
+        cuotaAdministracionHistorial: nuevoRegistroHistorial
+          ? [...historialActual, nuevoRegistroHistorial]
+          : historialActual,
         accesosRapidosAdmin: form.accesosRapidosAdmin
       };
 
@@ -191,6 +291,32 @@ export function AdminConfiguracion() {
         const nuevoId = await createConjunto(payload);
         await updateUser({ conjuntoId: nuevoId });
       }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveSeguridad = async () => {
+    if (!user?.conjuntoId || !isAdmin) return;
+    setSaving(true);
+    try {
+      await updateConjunto(user.conjuntoId, {
+        configuracionSeguridad: {
+          valorParqueaderoVehiculo: Number(seguridadTarifas.valorParqueaderoVehiculo || 0),
+          valorParqueaderoMoto: Number(seguridadTarifas.valorParqueaderoMoto || 0),
+          actualizadoPor: user.id,
+          fechaActualizacion: new Date(),
+        },
+      });
+
+      for (const usuarioSeguridad of seguridadUsuarios) {
+        await updateDoc(doc(db, 'usuarios', usuarioSeguridad.id), {
+          seguridadPerfil: usuarioSeguridad.seguridadPerfil,
+        });
+      }
+      window.alert('Configuración de seguridad actualizada correctamente.');
+    } catch (e: any) {
+      window.alert(e?.message ?? 'No se pudo guardar la configuración de seguridad');
     } finally {
       setSaving(false);
     }
@@ -219,9 +345,10 @@ export function AdminConfiguracion() {
       )}
 
       <Tabs defaultValue="conjunto" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="conjunto">Conjunto</TabsTrigger>
           <TabsTrigger value="cuotas">Cuotas</TabsTrigger>
+          <TabsTrigger value="seguridad">Seguridad</TabsTrigger>
           <TabsTrigger value="accesos">Accesos rápidos</TabsTrigger>
         </TabsList>
 
@@ -409,7 +536,7 @@ export function AdminConfiguracion() {
 
               {isAdmin && (
                 <div className="flex justify-end pt-2">
-                  <Button onClick={handleSubmit} disabled={loading || saving}>
+                  <Button onClick={() => handleSubmit('general')} disabled={loading || saving}>
                     <Save className="h-4 w-4 mr-2" />
                     {user?.conjuntoId && conjuntoActual ? 'Guardar cambios' : 'Registrar conjunto'}
                   </Button>
@@ -427,15 +554,28 @@ export function AdminConfiguracion() {
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Valor mensual (COP)</Label>
+                  <Label>Valor hasta el día 16 (COP)</Label>
                   <Input
                     type="number"
-                    value={form.cuotaValorMensual}
-                    onChange={(e) => handleChange('cuotaValorMensual', e.target.value)}
-                    placeholder="Ej: 150000"
+                    value={form.cuotaValorHastaDia16}
+                    onChange={(e) => handleChange('cuotaValorHastaDia16', e.target.value)}
+                    placeholder="Ej: 80000"
                     disabled={!isAdmin || loading || saving}
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label>Valor desde el día 17 (COP)</Label>
+                  <Input
+                    type="number"
+                    value={form.cuotaValorDesdeDia17}
+                    onChange={(e) => handleChange('cuotaValorDesdeDia17', e.target.value)}
+                    placeholder="Ej: 85000"
+                    disabled={!isAdmin || loading || saving}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Día de vencimiento</Label>
                   <Input
@@ -446,37 +586,152 @@ export function AdminConfiguracion() {
                     disabled={!isAdmin || loading || saving}
                   />
                 </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <input
-                  type="checkbox"
-                  checked={form.cuotaAplicaInteresMora}
-                  onChange={(e) => setForm((prev) => ({ ...prev, cuotaAplicaInteresMora: e.target.checked }))}
-                  className="rounded"
-                  disabled={!isAdmin || loading || saving}
-                />
-                <span className="text-sm">Aplicar interés de mora</span>
-              </div>
-
-              {form.cuotaAplicaInteresMora && (
                 <div className="space-y-2">
-                  <Label>Tasa de interés de mora mensual (%)</Label>
+                  <Label>Día de corte de mora</Label>
                   <Input
                     type="number"
-                    value={form.cuotaTasaInteresMoraMensual}
-                    onChange={(e) => handleChange('cuotaTasaInteresMoraMensual', e.target.value)}
-                    placeholder="Ej: 2.0"
+                    value={form.cuotaDiaCorteMora}
+                    onChange={(e) => handleChange('cuotaDiaCorteMora', e.target.value)}
+                    placeholder="16"
                     disabled={!isAdmin || loading || saving}
                   />
                 </div>
-              )}
+                <div className="space-y-2">
+                  <Label>Vigencia hasta</Label>
+                  <Input
+                    type="date"
+                    value={form.cuotaVigenciaHasta}
+                    onChange={(e) => handleChange('cuotaVigenciaHasta', e.target.value)}
+                    disabled={!isAdmin || loading || saving}
+                  />
+                </div>
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                Regla aplicada: hasta el día 16 se cobra el valor base; desde el día 17 se cobra el valor con recargo.
+                Todos los cambios quedan en historial de tarifas del conjunto.
+              </p>
 
               {isAdmin && (
                 <div className="flex justify-end pt-2">
-                  <Button onClick={handleSubmit} disabled={loading || saving}>
+                  <Button onClick={() => handleSubmit('cuotas')} disabled={loading || saving}>
                     <Save className="h-4 w-4 mr-2" />
                     Guardar cuota
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium">Histórico de cuotas</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {historialCuotas.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Aún no hay cambios registrados en tarifas de cuota.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="text-left py-2">Actualización</th>
+                        <th className="text-left py-2">Hasta día 16</th>
+                        <th className="text-left py-2">Desde día 17</th>
+                        <th className="text-left py-2">Vigencia</th>
+                        <th className="text-left py-2">Corte mora</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {historialCuotas.map((h, idx) => (
+                        <tr key={idx} className="border-b">
+                          <td className="py-2">{new Date(h.fechaActualizacion as unknown as Date).toLocaleDateString('es-CO')}</td>
+                          <td className="py-2">{Number(h.valorHastaDia16 || 0).toLocaleString('es-CO')}</td>
+                          <td className="py-2">{Number(h.valorDesdeDia17 || 0).toLocaleString('es-CO')}</td>
+                          <td className="py-2">
+                            {new Date(h.vigenciaDesde as unknown as Date).toLocaleDateString('es-CO')} - {new Date(h.vigenciaHasta as unknown as Date).toLocaleDateString('es-CO')}
+                          </td>
+                          <td className="py-2">{h.diaCorteMora}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="seguridad" className="space-y-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium">Tarifas parqueadero visitante</CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Valor vehículo (carro)</Label>
+                <Input
+                  type="number"
+                  value={seguridadTarifas.valorParqueaderoVehiculo}
+                  onChange={(e) =>
+                    setSeguridadTarifas((prev) => ({ ...prev, valorParqueaderoVehiculo: e.target.value }))
+                  }
+                  disabled={!isAdmin || loading || saving}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Valor moto</Label>
+                <Input
+                  type="number"
+                  value={seguridadTarifas.valorParqueaderoMoto}
+                  onChange={(e) =>
+                    setSeguridadTarifas((prev) => ({ ...prev, valorParqueaderoMoto: e.target.value }))
+                  }
+                  disabled={!isAdmin || loading || saving}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium">Perfiles operativos de seguridad</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Configura qué usuario de seguridad puede registrar salida/cobro (Control de Acceso) y cuál solo gestiona incidentes.
+              </p>
+              {seguridadUsuarios.length === 0 && (
+                <p className="text-sm text-muted-foreground">No hay usuarios con rol de seguridad registrados en este conjunto.</p>
+              )}
+              {seguridadUsuarios.map((u) => (
+                <div key={u.id} className="border rounded-md p-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-sm">{u.nombres} {u.apellidos}</p>
+                    <p className="text-xs text-muted-foreground">{u.email}</p>
+                  </div>
+                  <Select
+                    value={u.seguridadPerfil}
+                    onValueChange={(value: 'control_acceso' | 'incidentes') =>
+                      setSeguridadUsuarios((prev) =>
+                        prev.map((row) => (row.id === u.id ? { ...row, seguridadPerfil: value } : row))
+                      )
+                    }
+                    disabled={!isAdmin || loading || saving}
+                  >
+                    <SelectTrigger className="w-[220px]"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="control_acceso">Control de acceso (salidas + cobro)</SelectItem>
+                      <SelectItem value="incidentes">Solo incidentes</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ))}
+              {isAdmin && (
+                <div className="flex justify-end pt-2">
+                  <Button onClick={handleSaveSeguridad} disabled={loading || saving}>
+                    <Save className="h-4 w-4 mr-2" />
+                    Guardar seguridad
                   </Button>
                 </div>
               )}
@@ -514,7 +769,7 @@ export function AdminConfiguracion() {
 
               {isAdmin && (
                 <div className="flex justify-end pt-2">
-                  <Button onClick={handleSubmit} disabled={loading || saving}>
+                  <Button onClick={() => handleSubmit('accesos')} disabled={loading || saving}>
                     <Save className="h-4 w-4 mr-2" />
                     Guardar accesos
                   </Button>
@@ -527,4 +782,3 @@ export function AdminConfiguracion() {
     </div>
   );
 }
-

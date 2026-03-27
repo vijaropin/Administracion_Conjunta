@@ -4,6 +4,7 @@ import {
   collection,
   doc,
   deleteDoc,
+  getDoc,
   getDocs,
   orderBy,
   query,
@@ -30,8 +31,8 @@ interface FinancieroState {
   fetchPagosByResidente: (residenteId: string) => Promise<void>;
   createPago: (pago: Omit<Pago, 'id' | 'consecutivoGeneral' | 'consecutivoResidente' | 'fechaCreacion'>) => Promise<string>;
   updatePago: (id: string, data: Partial<Pago>) => Promise<void>;
-  registrarPago: (id: string, metodoPago: string, registradoPor: string, comprobante?: string) => Promise<void>;
-  registrarPagosLote: (ids: string[], metodoPago: string, registradoPor: string) => Promise<void>;
+  registrarPago: (id: string, metodoPago: string, registradoPor: string, comprobante?: string, fechaCruce?: Date) => Promise<void>;
+  registrarPagosLote: (ids: string[], metodoPago: string, registradoPor: string, fechaCruce?: Date) => Promise<void>;
   generatePagosMes: (conjuntoId: string, mes: number, anio: number, permitirFuturo?: boolean) => Promise<{ creados: number; omitidosDuplicado: number }>;
 
   fetchConceptosPago: (conjuntoId: string) => Promise<void>;
@@ -59,6 +60,8 @@ interface FinancieroState {
 
 type ConceptoPago = ConceptoPagoConfig;
 
+const endOfCurrentYear = () => new Date(new Date().getFullYear(), 11, 31, 23, 59, 59);
+
 const defaultConceptos = (conjuntoId: string, creadoPor: string): Omit<ConceptoPagoConfig, 'id' | 'fechaCreacion' | 'historialActualizaciones'>[] => [
   {
     conjuntoId,
@@ -67,6 +70,8 @@ const defaultConceptos = (conjuntoId: string, creadoPor: string): Omit<ConceptoP
     aplicaInteresMora: true,
     activo: true,
     creadoPor,
+    fechaVigenciaDesde: new Date(),
+    fechaVigenciaHasta: endOfCurrentYear(),
   },
   {
     conjuntoId,
@@ -75,6 +80,8 @@ const defaultConceptos = (conjuntoId: string, creadoPor: string): Omit<ConceptoP
     aplicaInteresMora: true,
     activo: true,
     creadoPor,
+    fechaVigenciaDesde: new Date(),
+    fechaVigenciaHasta: endOfCurrentYear(),
   },
   {
     conjuntoId,
@@ -83,6 +90,8 @@ const defaultConceptos = (conjuntoId: string, creadoPor: string): Omit<ConceptoP
     aplicaInteresMora: true,
     activo: true,
     creadoPor,
+    fechaVigenciaDesde: new Date(),
+    fechaVigenciaHasta: endOfCurrentYear(),
   },
   {
     conjuntoId,
@@ -91,6 +100,8 @@ const defaultConceptos = (conjuntoId: string, creadoPor: string): Omit<ConceptoP
     aplicaInteresMora: false,
     activo: true,
     creadoPor,
+    fechaVigenciaDesde: new Date(),
+    fechaVigenciaHasta: endOfCurrentYear(),
   },
   {
     conjuntoId,
@@ -99,6 +110,8 @@ const defaultConceptos = (conjuntoId: string, creadoPor: string): Omit<ConceptoP
     aplicaInteresMora: false,
     activo: true,
     creadoPor,
+    fechaVigenciaDesde: new Date(),
+    fechaVigenciaHasta: endOfCurrentYear(),
   },
   {
     conjuntoId,
@@ -107,6 +120,8 @@ const defaultConceptos = (conjuntoId: string, creadoPor: string): Omit<ConceptoP
     aplicaInteresMora: false,
     activo: true,
     creadoPor,
+    fechaVigenciaDesde: new Date(),
+    fechaVigenciaHasta: endOfCurrentYear(),
   },
 ];
 
@@ -120,6 +135,7 @@ const toLocalDate = (value: unknown): Date => {
 };
 
 const toLocalDateOpt = (value: unknown): Date | undefined => (value ? toLocalDate(value) : undefined);
+const toDateOnly = (value: Date): Date => new Date(value.getFullYear(), value.getMonth(), value.getDate());
 
 // Firestore no permite enviar valores `undefined` dentro del payload.
 const omitUndefined = <T extends Record<string, unknown>>(obj: T): Partial<T> =>
@@ -132,6 +148,11 @@ const normalizePago = (pago: Pago): Pago => ({
   fechaCreacion: pago.fechaCreacion ? toLocalDate(pago.fechaCreacion) : undefined,
   multaFecha: pago.multaFecha ? toLocalDate(pago.multaFecha) : undefined,
 });
+
+const isCuotaAdministracion = (concepto: string): boolean => {
+  const value = concepto.trim().toLowerCase();
+  return value.includes('cuota') && value.includes('administr');
+};
 
 const recalcPagosState = (pagos: Pago[]) => ({
   pagos,
@@ -172,6 +193,7 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
       set({ ...recalcPagosState(pagos), loading: false });
     } catch (error: any) {
       set({ error: error.message, loading: false });
+      throw error;
     }
   },
 
@@ -260,39 +282,80 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
     }
   },
 
-  registrarPago: async (id, metodoPago: string, registradoPor: string, comprobante?: string) => {
+  registrarPago: async (id, metodoPago: string, registradoPor: string, comprobante?: string, fechaCruce?: Date) => {
     set({ loading: true, error: null });
     try {
       const pago = get().pagos.find((p) => p.id === id);
       if (!pago) throw new Error('Pago no encontrado');
       if (pago.estado === 'pagado') throw new Error('Este pago ya se encuentra registrado');
 
-      const fechaPago = new Date();
-      const now = new Date();
-      const mesActual = now.getMonth() + 1;
-      const anioActual = now.getFullYear();
+      const fechaPago = fechaCruce ?? new Date();
+      const fechaPagoSolo = toDateOnly(fechaPago);
+      const mesPago = fechaPagoSolo.getMonth() + 1;
+      const anioPago = fechaPagoSolo.getFullYear();
 
-      // Bloquear pago de cuotas futuras
-      if (pago.anio > anioActual || (pago.anio === anioActual && pago.mes > mesActual)) {
+      // Bloquear pago de cuotas futuras con base en la fecha real de pago/cruce.
+      if (pago.anio > anioPago || (pago.anio === anioPago && pago.mes > mesPago)) {
         throw new Error('No se pueden pagar cuotas futuras');
       }
-      if (pago.fechaVencimiento && pago.fechaVencimiento > now) {
-        throw new Error('No se pueden pagar cuotas con fecha de vencimiento futura');
+      const fechaPagoOportuno = pago.fechaVencimiento ? toDateOnly(pago.fechaVencimiento) : undefined;
+      const pagoDespuesFechaOportuna = fechaPagoOportuno
+        ? fechaPagoSolo.getTime() > fechaPagoOportuno.getTime()
+        : false;
+
+      let cuotaConfig: Record<string, unknown> | null = null;
+      if (isCuotaAdministracion(pago.concepto)) {
+        const conjuntoSnap = await getDoc(doc(db, 'conjuntos', pago.conjuntoId));
+        const rawConjunto = conjuntoSnap.data() as { cuotaAdministracion?: Record<string, unknown> } | undefined;
+        cuotaConfig = rawConjunto?.cuotaAdministracion ?? null;
       }
 
-      const diaCorte = 16;
-      const diaPago = fechaPago.getDate();
+      const diaCorteConfig =
+        typeof cuotaConfig?.diaCorteMora === 'number'
+          ? Number(cuotaConfig.diaCorteMora)
+          : undefined;
+      const diaCorte = diaCorteConfig ?? pago.multaDiaCorte ?? fechaPagoOportuno?.getDate() ?? 16;
+      const diaPago = fechaPagoSolo.getDate();
 
-      const valorOriginalCuota = pago.valorOriginalCuota ?? pago.valor;
-      const tasa = pago.tasaInteresMoraMensual ?? 0;
-      const multaAplicable =
-        diaPago > diaCorte && (pago.aplicaInteresMora ?? false) && typeof tasa === 'number' && tasa > 0;
+      let valorEsperado = pago.valor;
+      let valorOriginalCuota = pago.valorOriginalCuota ?? pago.valor;
+      let multaValor = 0;
+      let multaAplicable = false;
+
+      if (isCuotaAdministracion(pago.concepto)) {
+        const valorBaseFallback = pago.valorOriginalCuota ?? pago.valor;
+        const valorHastaDia16 =
+          pago.valorHastaDia16 ??
+          (typeof cuotaConfig?.valorHastaDia16 === 'number' ? Number(cuotaConfig.valorHastaDia16) : undefined) ??
+          valorBaseFallback;
+        const valorDesdeDia17 =
+          pago.valorDesdeDia17 ??
+          (typeof cuotaConfig?.valorDesdeDia17 === 'number' ? Number(cuotaConfig.valorDesdeDia17) : undefined) ??
+          valorHastaDia16;
+        const pagoTardio = fechaPagoOportuno ? pagoDespuesFechaOportuna : diaPago > diaCorte;
+
+        valorOriginalCuota = valorHastaDia16;
+        valorEsperado = pagoTardio ? valorDesdeDia17 : valorHastaDia16;
+        multaAplicable = pagoTardio;
+        multaValor = Math.max(0, valorDesdeDia17 - valorHastaDia16);
+      } else {
+        const tasa = pago.tasaInteresMoraMensual ?? 0;
+        const pagoTardio = fechaPagoOportuno ? pagoDespuesFechaOportuna : diaPago > diaCorte;
+        multaAplicable =
+          pagoTardio && (pago.aplicaInteresMora ?? false) && typeof tasa === 'number' && tasa > 0;
+        multaValor = multaAplicable ? valorOriginalCuota * (tasa / 100) : 0;
+        valorEsperado = multaAplicable ? valorOriginalCuota + multaValor : valorOriginalCuota;
+      }
 
       const payloadRaw: Partial<Pago> & { estado: Pago['estado'] } = {
         estado: 'pagado',
         metodoPago: metodoPago as Pago['metodoPago'],
         comprobante,
         fechaPago,
+        valor: valorEsperado,
+        valorEsperadoPago: valorEsperado,
+        valorOriginalCuota,
+        multaDiaCorte: diaCorte,
       };
 
       // Evitar campos `undefined` en Firestore
@@ -302,36 +365,47 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
       });
 
       if (multaAplicable && !pago.multaAplicada) {
-        const multaValor = valorOriginalCuota * (tasa / 100);
-        const nuevoValor = valorOriginalCuota + multaValor;
-
-        payload.valor = nuevoValor;
         payload.multaAplicada = true;
         payload.multaValor = multaValor;
-        payload.valorOriginalCuota = valorOriginalCuota;
         payload.multaFecha = fechaPago;
-        payload.multaDiaCorte = diaCorte;
+      } else {
+        payload.multaAplicada = false;
+        payload.multaValor = 0;
       }
 
       // Registrar quien efectuó el pago (historial)
       payload.registradoPor = registradoPor;
 
       await updateDoc(doc(db, 'pagos', id), payload);
+
+      await addDoc(collection(db, 'auditoriaFinanciera'), {
+        conjuntoId: pago.conjuntoId,
+        entidad: 'pago',
+        entidadId: id,
+        accion: 'registrar_pago',
+        actorId: registradoPor,
+        valorAnterior: pago.valor,
+        valorEsperado,
+        valorFinal: valorEsperado,
+        fecha: new Date(),
+      });
+
       const next = get().pagos.map((p) => (p.id === id ? { ...p, ...payload } : p));
       set({ ...recalcPagosState(next), loading: false });
     } catch (error: any) {
       set({ error: error.message, loading: false });
+      throw error;
     }
   },
 
-  registrarPagosLote: async (ids, metodoPago, registradoPor) => {
+  registrarPagosLote: async (ids, metodoPago, registradoPor, fechaCruce) => {
     set({ loading: true, error: null });
     try {
       const { registrarPago } = get();
       for (const id of ids) {
         try {
           // reutilizamos la misma lógica/validaciones
-          await registrarPago(id, metodoPago, registradoPor);
+          await registrarPago(id, metodoPago, registradoPor, undefined, fechaCruce);
         } catch (err) {
           console.warn(`Error al registrar pago ${id}:`, err);
         }
@@ -339,6 +413,7 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
       set({ ...recalcPagosState(get().pagos), loading: false });
     } catch (error: any) {
       set({ error: error.message, loading: false });
+      throw error;
     }
   },
 
@@ -403,6 +478,9 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
   createConceptoPago: async (concepto) => {
     set({ loading: true, error: null });
     try {
+      if (!concepto.fechaVigenciaDesde || !concepto.fechaVigenciaHasta) {
+        throw new Error('Todos los conceptos deben tener vigencia desde y hasta');
+      }
       const payloadRaw = {
         ...concepto,
         fechaCreacion: new Date(),
@@ -423,6 +501,11 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const target = get().conceptosPago.find((c) => c.id === id);
+      const fechaVigenciaDesde = data.fechaVigenciaDesde ?? target?.fechaVigenciaDesde;
+      const fechaVigenciaHasta = data.fechaVigenciaHasta ?? target?.fechaVigenciaHasta;
+      if (!fechaVigenciaDesde || !fechaVigenciaHasta) {
+        throw new Error('Todos los conceptos deben tener vigencia desde y hasta');
+      }
       const historial = [
         ...(target?.historialActualizaciones ?? []),
         { fecha: new Date(), actualizadoPor, cambios },
@@ -439,6 +522,7 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
       set({ conceptosPago: next, loading: false });
     } catch (error: any) {
       set({ error: error.message, loading: false });
+      throw error;
     }
   },
 
@@ -562,7 +646,3 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
     }
   },
 }));
-
-
-
-

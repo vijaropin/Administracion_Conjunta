@@ -36,7 +36,8 @@ import {
   Calendar,
   User,
   Lock,
-  Globe
+  Globe,
+  Loader2
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 

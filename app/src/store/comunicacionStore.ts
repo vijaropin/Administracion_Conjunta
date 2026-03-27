@@ -11,8 +11,8 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { db } from '@/config/firebase';
-import type { Asamblea, AsambleaBitacora, Comunicado, Notificacion, Votacion, VotoRegistrado } from '@/types';
+import { auth, db } from '@/config/firebase';
+import type { Asamblea, AsambleaBitacora, Comunicado, Notificacion, Votacion, VotoRegistrado, Sugerencia } from '@/types';
 
 interface ComunicacionState {
   comunicados: Comunicado[];
@@ -42,6 +42,10 @@ interface ComunicacionState {
   fetchNotificaciones: (usuarioId: string) => Promise<void>;
   marcarNotificacionLeida: (notificacionId: string) => Promise<void>;
   createNotificacion: (notificacion: Omit<Notificacion, 'id'>) => Promise<string>;
+
+  sugerencias: Sugerencia[];
+  fetchSugerencias: (conjuntoId: string) => Promise<void>;
+  createSugerencia: (sugerencia: Omit<Sugerencia, 'id'>) => Promise<string>;
 }
 
 const toDate = (value: unknown): Date | undefined => {
@@ -51,6 +55,158 @@ const toDate = (value: unknown): Date | undefined => {
     return (value as { toDate: () => Date }).toDate();
   }
   return new Date(value as string);
+};
+
+const normalizeSugerencia = (id: string, data: Record<string, unknown>): Sugerencia => ({
+  id,
+  conjuntoId: String(data.conjuntoId || ''),
+  usuarioId: String(data.usuarioId || ''),
+  contenido: String(data.contenido || ''),
+  fecha: toDate(data.fecha) || new Date(),
+  usuarioNombre: typeof data.usuarioNombre === 'string' ? data.usuarioNombre : undefined,
+  usuarioUnidad: typeof data.usuarioUnidad === 'string' ? data.usuarioUnidad : undefined,
+  usuarioTorre: typeof data.usuarioTorre === 'string' ? data.usuarioTorre : undefined,
+});
+
+const isFirestoreIndexError = (error: unknown) => {
+  const firebaseError = error as { code?: string; message?: string } | undefined;
+  return firebaseError?.code === 'failed-precondition' || /index/i.test(String(firebaseError?.message || ''));
+};
+
+const getAsambleaConjuntoId = async (asambleaId: string): Promise<string> => {
+  const asambleaDoc = await getDoc(doc(db, 'asambleas', asambleaId));
+  if (!asambleaDoc.exists()) {
+    throw new Error('Asamblea no encontrada');
+  }
+
+  return String(asambleaDoc.data().conjuntoId || '');
+};
+
+const normalizeVotacion = (id: string, data: Record<string, unknown>): Votacion => ({
+  id,
+  conjuntoId: String(data.conjuntoId || ''),
+  asambleaId: String(data.asambleaId || ''),
+  pregunta: String(data.pregunta || ''),
+  opciones: Array.isArray(data.opciones) ? (data.opciones as ('SI' | 'NO')[]) : ['SI', 'NO'],
+  votos: (data.votos as Record<string, number>) || { SI: 0, NO: 0 },
+  votantes: Array.isArray(data.votantes) ? (data.votantes as string[]) : [],
+  votosRegistrados: Array.isArray(data.votosRegistrados)
+    ? (data.votosRegistrados as VotoRegistrado[]).map((registro) => ({
+      ...registro,
+      fecha: toDate(registro.fecha) || new Date(),
+    }))
+    : [],
+  estado: data.estado === 'cerrada' ? 'cerrada' : 'activa',
+  fechaCierre: toDate(data.fechaCierre),
+});
+
+const normalizeAsamblea = (id: string, data: Record<string, unknown>): Asamblea => ({
+  id,
+  conjuntoId: String(data.conjuntoId || ''),
+  creadoPor: String(data.creadoPor || ''),
+  titulo: String(data.titulo || ''),
+  descripcion: String(data.descripcion || ''),
+  fecha: toDate(data.fecha) || new Date(),
+  horaInicio: String(data.horaInicio || ''),
+  horaFin: String(data.horaFin || ''),
+  lugar: String(data.lugar || ''),
+  tipo: data.tipo === 'extraordinaria' ? 'extraordinaria' : 'ordinaria',
+  estado:
+    data.estado === 'en_curso' || data.estado === 'finalizada' || data.estado === 'cancelada'
+      ? data.estado
+      : 'programada',
+  quorumRequerido: Number(data.quorumRequerido || 0),
+  quorumAlcanzado: Number(data.quorumAlcanzado || 0),
+  habilitarVotacion: Boolean(data.habilitarVotacion),
+  tiempoVotacionMinutos: Number(data.tiempoVotacionMinutos || 0),
+  votaciones: Array.isArray(data.votaciones)
+    ? (data.votaciones as Votacion[]).map((votacion, index) =>
+      normalizeVotacion(votacion.id || `votacion-${index}`, votacion as unknown as Record<string, unknown>)
+    )
+    : [],
+});
+
+const normalizeBitacora = (id: string, data: Record<string, unknown>): AsambleaBitacora => ({
+  id,
+  conjuntoId: String(data.conjuntoId || ''),
+  asambleaId: String(data.asambleaId || ''),
+  usuarioId: String(data.usuarioId || ''),
+  evento:
+    data.evento === 'apertura_votacion' || data.evento === 'cierre_votacion' || data.evento === 'voto_registrado'
+      ? data.evento
+      : 'creacion_asamblea',
+  detalle: String(data.detalle || ''),
+  fecha: toDate(data.fecha) || new Date(),
+});
+
+const normalizeComunicado = (id: string, data: Record<string, unknown>): Comunicado => ({
+  id,
+  conjuntoId: String(data.conjuntoId || ''),
+  autorId: String(data.autorId || ''),
+  titulo: String(data.titulo || ''),
+  contenido: String(data.contenido || ''),
+  fecha: toDate(data.fecha) || new Date(),
+  tipo:
+    data.tipo === 'urgente' || data.tipo === 'asamblea' || data.tipo === 'mantenimiento'
+      ? data.tipo
+      : 'general',
+  destinatarios:
+    data.destinatarios === 'torre' ||
+      data.destinatarios === 'unidad' ||
+      data.destinatarios === 'seguridad' ||
+      data.destinatarios === 'comite_convivencia' ||
+      data.destinatarios === 'consejo_administracion'
+      ? data.destinatarios
+      : 'todos',
+  torreDestino: typeof data.torreDestino === 'string' ? data.torreDestino : undefined,
+  unidadDestino: typeof data.unidadDestino === 'string' ? data.unidadDestino : undefined,
+  leidoPor: Array.isArray(data.leidoPor) ? (data.leidoPor as string[]) : [],
+  adjuntos: Array.isArray(data.adjuntos) ? (data.adjuntos as string[]) : undefined,
+});
+
+const normalizeText = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
+
+const getAsambleaSignature = (asamblea: Asamblea) => {
+  const fecha = toDate(asamblea.fecha);
+  const fechaKey = fecha ? fecha.toISOString().slice(0, 10) : 'sin-fecha';
+  return [
+    asamblea.conjuntoId,
+    normalizeText(asamblea.titulo),
+    fechaKey,
+    asamblea.horaInicio,
+    asamblea.horaFin,
+    asamblea.tipo,
+  ].join('|');
+};
+
+const getAsambleaScore = (asamblea: Asamblea) => {
+  const estadoScore = {
+    en_curso: 40,
+    programada: 30,
+    finalizada: 20,
+    cancelada: 10,
+  }[asamblea.estado];
+
+  return estadoScore + (asamblea.habilitarVotacion ? 5 : 0) + asamblea.quorumAlcanzado;
+};
+
+const dedupeAsambleas = (asambleas: Asamblea[]) => {
+  const unique = new Map<string, Asamblea>();
+
+  asambleas.forEach((asamblea) => {
+    const signature = getAsambleaSignature(asamblea);
+    const existing = unique.get(signature);
+
+    if (!existing || getAsambleaScore(asamblea) > getAsambleaScore(existing)) {
+      unique.set(signature, asamblea);
+    }
+  });
+
+  return Array.from(unique.values()).sort((left, right) => {
+    const rightTime = toDate(right.fecha)?.getTime() || 0;
+    const leftTime = toDate(left.fecha)?.getTime() || 0;
+    return rightTime - leftTime;
+  });
 };
 
 export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
@@ -67,7 +223,7 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
     try {
       const q = query(collection(db, 'comunicados'), where('conjuntoId', '==', conjuntoId), orderBy('fecha', 'desc'));
       const snapshot = await getDocs(q);
-      const comunicados = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Comunicado));
+      const comunicados = snapshot.docs.map((d) => normalizeComunicado(d.id, d.data() as Record<string, unknown>));
       set({ comunicados, loading: false });
     } catch (error: any) {
       set({ error: error.message, loading: false });
@@ -78,7 +234,11 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const docRef = await addDoc(collection(db, 'comunicados'), comunicado);
-      set({ loading: false });
+      const comunicadoCreado = normalizeComunicado(docRef.id, comunicado as unknown as Record<string, unknown>);
+      set({
+        comunicados: [comunicadoCreado, ...get().comunicados],
+        loading: false,
+      });
       return docRef.id;
     } catch (error: any) {
       set({ error: error.message, loading: false });
@@ -91,6 +251,13 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
       await updateDoc(doc(db, 'comunicados', comunicadoId), {
         leidoPor: arrayUnion(usuarioId),
       });
+      set({
+        comunicados: get().comunicados.map((comunicado) =>
+          comunicado.id === comunicadoId && !(comunicado.leidoPor || []).includes(usuarioId)
+            ? { ...comunicado, leidoPor: [...(comunicado.leidoPor || []), usuarioId] }
+            : comunicado
+        ),
+      });
     } catch (error: any) {
       set({ error: error.message });
     }
@@ -101,7 +268,9 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
     try {
       const q = query(collection(db, 'asambleas'), where('conjuntoId', '==', conjuntoId), orderBy('fecha', 'desc'));
       const snapshot = await getDocs(q);
-      const asambleas = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Asamblea));
+      const asambleas = dedupeAsambleas(
+        snapshot.docs.map((d) => normalizeAsamblea(d.id, d.data() as Record<string, unknown>))
+      );
       set({ asambleas, loading: false });
     } catch (error: any) {
       set({ error: error.message, loading: false });
@@ -124,7 +293,10 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       await updateDoc(doc(db, 'asambleas', id), data as Record<string, unknown>);
-      set({ asambleas: get().asambleas.map((a) => (a.id === id ? { ...a, ...data } : a)), loading: false });
+      set({
+        asambleas: dedupeAsambleas(get().asambleas.map((a) => (a.id === id ? { ...a, ...data } : a))),
+        loading: false,
+      });
     } catch (error: any) {
       set({ error: error.message, loading: false });
     }
@@ -135,7 +307,7 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
     try {
       const q = query(collection(db, 'votaciones'), where('asambleaId', '==', asambleaId));
       const snapshot = await getDocs(q);
-      const votaciones = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Votacion));
+      const votaciones = snapshot.docs.map((d) => normalizeVotacion(d.id, d.data() as Record<string, unknown>));
       set({ votaciones, loading: false });
     } catch (error: any) {
       set({ error: error.message, loading: false });
@@ -145,7 +317,11 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
   createVotacion: async (votacion) => {
     set({ loading: true, error: null });
     try {
-      const docRef = await addDoc(collection(db, 'votaciones'), votacion);
+      const payload = {
+        ...votacion,
+        conjuntoId: votacion.conjuntoId || await getAsambleaConjuntoId(votacion.asambleaId),
+      };
+      const docRef = await addDoc(collection(db, 'votaciones'), payload);
       set({ loading: false });
       return docRef.id;
     } catch (error: any) {
@@ -160,7 +336,8 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
       const votacionRef = doc(db, 'votaciones', votacionId);
       const votacionDoc = await getDoc(votacionRef);
       if (!votacionDoc.exists()) throw new Error('Votación no encontrada');
-      const votacion = votacionDoc.data() as Votacion;
+      const votacion = normalizeVotacion(votacionDoc.id, votacionDoc.data() as Record<string, unknown>);
+      const conjuntoId = votacion.conjuntoId || await getAsambleaConjuntoId(votacion.asambleaId);
 
       await updateDoc(votacionRef, { estado: 'cerrada', fechaCierre: new Date() });
       set({
@@ -168,6 +345,7 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
       });
 
       await get().registrarEventoAsamblea({
+        conjuntoId,
         asambleaId: votacion.asambleaId,
         usuarioId,
         evento: 'cierre_votacion',
@@ -178,6 +356,13 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
       const asambleaDoc = await getDoc(asambleaRef);
       if (asambleaDoc.exists()) {
         await updateDoc(asambleaRef, { estado: 'finalizada' });
+        set({
+          asambleas: dedupeAsambleas(
+            get().asambleas.map((asamblea) =>
+              asamblea.id === votacion.asambleaId ? { ...asamblea, estado: 'finalizada' } : asamblea
+            )
+          ),
+        });
       }
 
       set({ loading: false });
@@ -195,7 +380,8 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
 
       if (!votacionDoc.exists()) throw new Error('Votación no encontrada');
 
-      const votacion = votacionDoc.data() as Votacion;
+      const votacion = normalizeVotacion(votacionDoc.id, votacionDoc.data() as Record<string, unknown>);
+      const conjuntoId = votacion.conjuntoId || await getAsambleaConjuntoId(votacion.asambleaId);
       const fechaCierre = toDate(votacion.fechaCierre);
 
       if (votacion.estado !== 'activa') throw new Error('La votación ya se encuentra cerrada');
@@ -219,16 +405,17 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
       const localVotaciones = get().votaciones.map((v) =>
         v.id === votacionId
           ? {
-              ...v,
-              votos: nuevosVotos,
-              votantes: [...(v.votantes || []), usuarioId],
-              votosRegistrados: [...(v.votosRegistrados || []), nuevoRegistro],
-            }
+            ...v,
+            votos: nuevosVotos,
+            votantes: [...(v.votantes || []), usuarioId],
+            votosRegistrados: [...(v.votosRegistrados || []), nuevoRegistro],
+          }
           : v
       );
       set({ votaciones: localVotaciones });
 
       await get().registrarEventoAsamblea({
+        conjuntoId,
         asambleaId: votacion.asambleaId,
         usuarioId,
         evento: 'voto_registrado',
@@ -248,8 +435,10 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
       });
 
       set({
-        asambleas: get().asambleas.map((a) =>
-          a.id === votacion.asambleaId ? { ...a, quorumAlcanzado: votantesUnicos.size } : a
+        asambleas: dedupeAsambleas(
+          get().asambleas.map((a) =>
+            a.id === votacion.asambleaId ? { ...a, quorumAlcanzado: votantesUnicos.size } : a
+          )
         ),
         loading: false,
       });
@@ -264,7 +453,7 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
     try {
       const q = query(collection(db, 'asambleaBitacora'), where('asambleaId', '==', asambleaId), orderBy('fecha', 'desc'));
       const snapshot = await getDocs(q);
-      const bitacoraAsamblea = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as AsambleaBitacora));
+      const bitacoraAsamblea = snapshot.docs.map((d) => normalizeBitacora(d.id, d.data() as Record<string, unknown>));
       set({ bitacoraAsamblea, loading: false });
     } catch (error: any) {
       set({ error: error.message, loading: false });
@@ -273,8 +462,10 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
 
   registrarEventoAsamblea: async (evento) => {
     try {
+      const conjuntoId = evento.conjuntoId || await getAsambleaConjuntoId(evento.asambleaId);
       const docRef = await addDoc(collection(db, 'asambleaBitacora'), {
         ...evento,
+        conjuntoId,
         fecha: new Date(),
       });
       return docRef.id;
@@ -311,6 +502,69 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
       return docRef.id;
     } catch (error: any) {
       set({ error: error.message });
+      throw error;
+    }
+  },
+
+  sugerencias: [],
+
+  fetchSugerencias: async (conjuntoId: string) => {
+    set({ loading: true, error: null });
+    try {
+      const baseCollection = collection(db, 'sugerencias');
+      let snapshot;
+      try {
+        const indexedQuery = query(baseCollection, where('conjuntoId', '==', conjuntoId), orderBy('fecha', 'desc'));
+        snapshot = await getDocs(indexedQuery);
+      } catch (error) {
+        if (!isFirestoreIndexError(error)) throw error;
+        const fallbackQuery = query(baseCollection, where('conjuntoId', '==', conjuntoId));
+        snapshot = await getDocs(fallbackQuery);
+      }
+
+      const sugerencias = snapshot.docs
+        .map((d) => normalizeSugerencia(d.id, d.data() as Record<string, unknown>))
+        .sort((a, b) => b.fecha.getTime() - a.fecha.getTime());
+      set({ sugerencias, loading: false });
+    } catch (error: any) {
+      set({ error: error.message, loading: false });
+    }
+  },
+
+  createSugerencia: async (sugerencia) => {
+    set({ loading: true, error: null });
+    try {
+      const usuarioId = auth.currentUser?.uid;
+      if (!usuarioId) throw new Error('Tu sesión no es válida. Cierra sesión e inicia nuevamente.');
+
+      const contenido = sugerencia.contenido.trim();
+      if (!contenido) throw new Error('La sugerencia no puede estar vacía.');
+
+      const payload = {
+        ...sugerencia,
+        usuarioId,
+        contenido,
+        fecha: toDate(sugerencia.fecha) || new Date(),
+      };
+
+      const docRef = await addDoc(collection(db, 'sugerencias'), payload);
+      const sugerenciaCreada: Sugerencia = {
+        id: docRef.id,
+        conjuntoId: payload.conjuntoId,
+        usuarioId: payload.usuarioId,
+        contenido: payload.contenido,
+        fecha: toDate(payload.fecha) || new Date(),
+        usuarioNombre: payload.usuarioNombre,
+        usuarioUnidad: payload.usuarioUnidad,
+        usuarioTorre: payload.usuarioTorre,
+      };
+      set({
+        sugerencias: [sugerenciaCreada, ...get().sugerencias],
+        loading: false,
+      });
+      return docRef.id;
+    } catch (error: any) {
+      set({ error: error.message, loading: false });
       throw error;
     }
   },

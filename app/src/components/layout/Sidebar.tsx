@@ -13,7 +13,6 @@ import {
   Menu,
   LogOut,
   Vote,
-  Home,
   Scale,
   Car,
   FileText,
@@ -38,7 +37,11 @@ export function Sidebar({ className }: SidebarProps) {
 
   const isAdministrador = user?.tipo === 'administrador';
   const isConsejo = user?.tipo === 'consejo';
-  const isResidente = user?.tipo === 'residente';
+  const isResidente =
+    user?.tipo === 'residente' ||
+    user?.tipo === 'propietario_residente' ||
+    user?.tipo === 'arrendatario' ||
+    user?.tipo === 'propietario_no_residente';
   const isComite = user?.tipo === 'comite_convivencia';
   const isServicios = user?.tipo === 'servicios_generales';
   const isContadora = user?.tipo === 'contadora';
@@ -46,7 +49,6 @@ export function Sidebar({ className }: SidebarProps) {
   const adminLinks = [
     { href: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/admin/conjunto', label: 'Mi Conjunto', icon: Building2 },
-    { href: '/admin/unidades', label: 'Unidades', icon: Home },
     { href: '/admin/finanzas', label: 'Finanzas', icon: DollarSign },
     { href: '/admin/comunicados', label: 'Comunicados', icon: MessageSquare },
     { href: '/admin/asambleas', label: 'Asambleas', icon: Vote },
@@ -63,6 +65,7 @@ export function Sidebar({ className }: SidebarProps) {
 
   const consejoLinks = [
     { href: '/consejo/dashboard', label: 'Dashboard Consejo', icon: LayoutDashboard },
+    { href: '/consejo/comunicados', label: 'Comunicados', icon: MessageSquare },
     { href: '/consejo/asambleas', label: 'Asambleas', icon: Vote },
     { href: '/consejo/seguridad', label: 'Seguridad', icon: Shield },
     { href: '/consejo/residentes', label: 'Residentes', icon: Users },
@@ -74,6 +77,7 @@ export function Sidebar({ className }: SidebarProps) {
   const contadoraLinks = [
     { href: '/contadora/dashboard', label: 'Dashboard Contable', icon: Wallet },
     { href: '/contadora/finanzas', label: 'Pagos y Cartera', icon: DollarSign },
+    { href: '/contadora/comunicados', label: 'Comunicados', icon: MessageSquare },
     { href: '/contadora/documentos', label: 'Soportes', icon: Receipt },
   ];
 
@@ -89,6 +93,7 @@ export function Sidebar({ className }: SidebarProps) {
 
   const comiteLinks = [
     { href: '/comite/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { href: '/comite/comunicados', label: 'Comunicados', icon: MessageSquare },
     { href: '/comite/casos', label: 'Casos de Convivencia', icon: Scale },
     { href: '/comite/audiencias', label: 'Audiencias', icon: Calendar },
     { href: '/comite/repositorio', label: 'Repositorio Normativo', icon: BookOpen },
@@ -98,11 +103,13 @@ export function Sidebar({ className }: SidebarProps) {
   const seguridadLinks = [
     { href: '/seguridad/dashboard', label: 'Control', icon: LayoutDashboard },
     { href: '/seguridad/visitantes', label: 'Visitantes', icon: Users },
+    { href: '/seguridad/comunicados', label: 'Comunicados', icon: MessageSquare },
     { href: '/seguridad/incidentes', label: 'Incidentes', icon: Shield },
   ];
 
   const serviciosLinks = [
     { href: '/servicios/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { href: '/servicios/comunicados', label: 'Comunicados', icon: MessageSquare },
     { href: '/servicios/novedades', label: 'Mis Novedades', icon: Shield },
     { href: '/servicios/solicitudes', label: 'Solicitudes', icon: Wrench },
   ];

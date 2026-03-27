@@ -35,6 +35,14 @@ service cloud.firestore {
     function isSeguridad() { return isActiveUser() && userRole() == 'seguridad'; }
     function isComite() { return isActiveUser() && userRole() == 'comite_convivencia'; }
     function isResidente() { return isActiveUser() && userRole() == 'residente'; }
+    function isResidentLike() {
+      return isActiveUser() && (
+        userRole() == 'residente' ||
+        userRole() == 'propietario_residente' ||
+        userRole() == 'arrendatario' ||
+        userRole() == 'propietario_no_residente'
+      );
+    }
     function isServicios() { return isActiveUser() && userRole() == 'servicios_generales'; }
 
     function sameConjuntoId(conjuntoId) {
@@ -49,8 +57,32 @@ service cloud.firestore {
       return isActiveUser() && request.resource.data.conjuntoId == userConjunto();
     }
 
+    function asambleaPath(asambleaId) {
+      return /databases/$(database)/documents/asambleas/$(asambleaId);
+    }
+
+    function sameConjuntoAsamblea(asambleaId) {
+      return isActiveUser() &&
+        exists(asambleaPath(asambleaId)) &&
+        get(asambleaPath(asambleaId)).data.conjuntoId == userConjunto();
+    }
+
+    function sameConjuntoAsambleaDoc() {
+      return isActiveUser() && (
+        resource.data.conjuntoId == userConjunto() ||
+        sameConjuntoAsamblea(resource.data.asambleaId)
+      );
+    }
+
+    function sameConjuntoAsambleaReq() {
+      return isActiveUser() && (
+        request.resource.data.conjuntoId == userConjunto() ||
+        sameConjuntoAsamblea(request.resource.data.asambleaId)
+      );
+    }
+
     function canReadConjuntoData() {
-      return isAdmin() || isConsejo() || isContadora() || isSeguridad() || isComite() || isResidente() || isServicios();
+      return isAdmin() || isConsejo() || isContadora() || isSeguridad() || isComite() || isResidentLike() || isServicios();
     }
 
     function canWriteAdminFinance() {
@@ -125,7 +157,7 @@ service cloud.firestore {
 
     match /comunicados/{id} {
       allow read: if sameConjuntoDoc() && canReadConjuntoData();
-      allow create, update: if sameConjuntoReq() && isAdmin();
+      allow create, update: if sameConjuntoReq() && canReadConjuntoData();
       allow delete: if false;
     }
 
@@ -136,15 +168,15 @@ service cloud.firestore {
     }
 
     match /votaciones/{id} {
-      allow read: if sameConjuntoDoc() && canReadConjuntoData();
-      allow create: if sameConjuntoReq() && isAdmin();
-      allow update: if sameConjuntoReq() && (isAdmin() || isResidente());
+      allow read: if sameConjuntoAsambleaDoc() && canReadConjuntoData();
+      allow create: if sameConjuntoAsambleaReq() && isAdmin();
+      allow update: if sameConjuntoAsambleaReq() && (isAdmin() || isResidentLike());
       allow delete: if false;
     }
 
     match /asambleaBitacora/{id} {
-      allow read: if sameConjuntoDoc() && canReadConjuntoData();
-      allow create: if sameConjuntoReq() && isAdmin();
+      allow read: if sameConjuntoAsambleaDoc() && canReadConjuntoData();
+      allow create: if sameConjuntoAsambleaReq() && isAdmin();
       allow update, delete: if false;
     }
 
@@ -250,6 +282,18 @@ service cloud.firestore {
       allow create: if isActiveUser();
       allow update: if isActiveUser() && resource.data.usuarioId == request.auth.uid;
       allow delete: if false;
+    }
+
+    match /sugerencias/{id} {
+      allow read: if sameConjuntoDoc() && isActiveUser();
+      allow create: if sameConjuntoReq() &&
+        isActiveUser() &&
+        request.resource.data.contenido is string &&
+        request.resource.data.contenido.size() > 0 &&
+        request.resource.data.usuarioId is string &&
+        request.resource.data.usuarioId.size() > 0 &&
+        (request.resource.data.usuarioId == request.auth.uid || isAdmin());
+      allow update, delete: if false;
     }
 
     match /{document=**} {

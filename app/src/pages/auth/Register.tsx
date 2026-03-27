@@ -24,10 +24,10 @@ export function Register() {
     telefono: '',
     password: '',
     confirmPassword: '',
-    tipo: 'residente',
+    tipo: 'propietario_residente',
     conjuntoId: '',
     unidad: '',
-    torre: '',
+    bloque: '',
     consentimientoDatos: false,
     aceptaTerminos: false
   });
@@ -60,7 +60,7 @@ export function Register() {
         tipo: formData.tipo as any,
         conjuntoId: formData.conjuntoId,
         unidad: formData.unidad,
-        torre: formData.torre
+        torre: formData.bloque
       });
       setStep(3); // Éxito
     } catch (error) {
@@ -175,32 +175,28 @@ export function Register() {
                           <SelectValue placeholder="Selecciona tu rol" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="residente">Residente</SelectItem>
-                          <SelectItem value="administrador">Administrador</SelectItem>
-                          <SelectItem value="consejo">Consejo de Administración</SelectItem>
-                          <SelectItem value="comite_convivencia">Comité de Convivencia</SelectItem>
-                          <SelectItem value="seguridad">Personal de Seguridad</SelectItem>
-                          <SelectItem value="servicios_generales">Servicios Generales</SelectItem>
-                          <SelectItem value="contadora">Contadora</SelectItem>
+                          <SelectItem value="propietario_residente">Propietario Residente</SelectItem>
+                          <SelectItem value="arrendatario">Arrendatario</SelectItem>
+                          <SelectItem value="propietario_no_residente">Propietario No Residente</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="torre">Torre/Interior</Label>
+                        <Label htmlFor="bloque">Bloque No.</Label>
                         <Input
-                          id="torre"
-                          placeholder="Torre 1"
-                          value={formData.torre}
-                          onChange={(e) => handleChange('torre', e.target.value)}
+                          id="bloque"
+                          placeholder="Ej: Bloque 1"
+                          value={formData.bloque}
+                          onChange={(e) => handleChange('bloque', e.target.value)}
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="unidad">Apartamento/Casa *</Label>
+                        <Label htmlFor="unidad">No. Casa *</Label>
                         <Input
                           id="unidad"
-                          placeholder="101"
+                          placeholder="Ej: 101"
                           value={formData.unidad}
                           onChange={(e) => handleChange('unidad', e.target.value)}
                           required

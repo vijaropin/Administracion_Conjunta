@@ -22,7 +22,7 @@ interface SeguridadState {
   fetchVisitantes: (conjuntoId: string) => Promise<void>;
   fetchVisitantesHoy: (conjuntoId: string) => Promise<void>;
   createVisitante: (visitante: Omit<Visitante, 'id'>) => Promise<string>;
-  registrarSalida: (id: string) => Promise<void>;
+  registrarSalida: (id: string, data?: { cobroParqueadero?: number; registradoPor?: string }) => Promise<void>;
   
   fetchIncidentes: (conjuntoId: string) => Promise<void>;
   createIncidente: (incidente: Omit<Incidente, 'id'>) => Promise<string>;
@@ -98,15 +98,25 @@ export const useSeguridadStore = create<SeguridadState>((set, get) => ({
     }
   },
 
-  registrarSalida: async (id: string) => {
+  registrarSalida: async (id: string, data) => {
     set({ loading: true, error: null });
     try {
-      await updateDoc(doc(db, 'visitantes', id), {
-        fechaSalida: new Date()
-      });
+      const visitante = get().visitantes.find((v) => v.id === id);
+      const fechaSalida = new Date();
+      const tieneVehiculo = visitante?.vehiculoTipo === 'carro' || visitante?.vehiculoTipo === 'moto';
+      const cobroEstado: Visitante['cobroEstado'] = tieneVehiculo
+        ? (typeof data?.cobroParqueadero === 'number' ? 'cobrado' : 'pendiente')
+        : 'no_aplica';
+      const payload: Partial<Visitante> = {
+        fechaSalida,
+        cobroEstado,
+        ...(typeof data?.cobroParqueadero === 'number' ? { cobroParqueadero: data.cobroParqueadero, cobroFecha: fechaSalida } : {}),
+        ...(data?.registradoPor ? { cobroRegistradoPor: data.registradoPor } : {}),
+      };
+      await updateDoc(doc(db, 'visitantes', id), payload);
       const { visitantes } = get();
       set({ 
-        visitantes: visitantes.map(v => v.id === id ? { ...v, fechaSalida: new Date() } : v),
+        visitantes: visitantes.map(v => v.id === id ? { ...v, ...payload } : v),
         loading: false 
       });
     } catch (error: any) {

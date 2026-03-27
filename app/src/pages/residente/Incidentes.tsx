@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { useSeguridadStore } from '@/store/seguridadStore';
+import { useDocumentoStore } from '@/store/documentoStore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,7 +23,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { AlertTriangle, Plus, Shield, Clock, CheckCircle2 } from 'lucide-react';
+import { AlertTriangle, Plus, Shield, Clock, CheckCircle2, Paperclip, X } from 'lucide-react';
+import type { Incidente } from '@/types';
+
+type TipoIncidente = Incidente['tipo'];
+type PrioridadIncidente = Incidente['prioridad'];
 
 const tipoIncidenteOptions = [
   { value: 'seguridad', label: 'Seguridad / Robo' },
@@ -34,7 +39,11 @@ const tipoIncidenteOptions = [
 export function ResidenteIncidentes() {
   const { user } = useAuthStore();
   const { incidentes, fetchIncidentes, createIncidente } = useSeguridadStore();
+  const { subirArchivo } = useDocumentoStore();
   const [open, setOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [adjuntos, setAdjuntos] = useState<File[]>([]);
   const [form, setForm] = useState({
     tipo: 'seguridad',
     prioridad: 'media',
@@ -54,39 +63,78 @@ export function ResidenteIncidentes() {
 
   const misIncidentes = incidentes.filter((i) => i.residenteId === user?.id || i.unidadId === user?.unidad);
 
+  const handleAdjuntosChange = async (files: FileList | null) => {
+    if (!files) return;
+    setError(null);
+    const nuevos = Array.from(files);
+    const total = [...adjuntos, ...nuevos];
+    if (total.length > 5) {
+      setError('Solo puedes adjuntar hasta 5 fotos por reporte.');
+      return;
+    }
+    for (const file of nuevos) {
+      if (!file.type.startsWith('image/')) {
+        setError('Solo se permiten fotos en el reporte de incidentes.');
+        return;
+      }
+    }
+    setAdjuntos(total);
+  };
+
   const crearIncidente = async () => {
     if (!user?.conjuntoId || !user?.id) return;
-    await createIncidente({
-      conjuntoId: user.conjuntoId,
-      residenteId: user.id,
-      unidadId: user.unidad,
-      tipo: form.tipo as any,
-      categoria: form.tipo === 'seguridad' ? 'seguridad_robo' : form.tipo === 'ruido' ? 'ruido_convivencia' : 'otro',
-      reportadoPorNombre: `${user.nombres} ${user.apellidos}`,
-      reportadoPorTelefono: user.telefono,
-      reportadoPorEmail: user.email,
-      fechaIncidente: form.fechaIncidente ? new Date(form.fechaIncidente) : new Date(),
-      horaIncidente: form.horaIncidente,
-      ubicacion: form.ubicacion,
-      descripcion: form.descripcion,
-      testigos: form.testigos || undefined,
-      accionesInmediatas: form.accionesInmediatas || undefined,
-      fecha: new Date(),
-      estado: 'reportado',
-      prioridad: form.prioridad as any,
-    });
+    if (!form.descripcion || !form.ubicacion) {
+      setError('Debes diligenciar ubicación y descripción.');
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const evidencias: string[] = [];
+      for (const file of adjuntos) {
+        const ruta = `incidentes/${user.conjuntoId}/${user.id}/${Date.now()}_${file.name}`;
+        const url = await subirArchivo(file, ruta);
+        evidencias.push(url);
+      }
 
-    setForm({
-      tipo: 'seguridad',
-      prioridad: 'media',
-      fechaIncidente: '',
-      horaIncidente: '',
-      ubicacion: '',
-      descripcion: '',
-      testigos: '',
-      accionesInmediatas: '',
-    });
-    setOpen(false);
+      await createIncidente({
+        conjuntoId: user.conjuntoId,
+        residenteId: user.id,
+        unidadId: user.unidad,
+        tipo: form.tipo as TipoIncidente,
+        categoria: form.tipo === 'seguridad' ? 'seguridad_robo' : form.tipo === 'ruido' ? 'ruido_convivencia' : 'otro',
+        reportadoPorNombre: `${user.nombres} ${user.apellidos}`,
+        reportadoPorTelefono: user.telefono,
+        reportadoPorEmail: user.email,
+        fechaIncidente: form.fechaIncidente ? new Date(form.fechaIncidente) : new Date(),
+        horaIncidente: form.horaIncidente,
+        ubicacion: form.ubicacion,
+        descripcion: form.descripcion,
+        testigos: form.testigos || undefined,
+        accionesInmediatas: form.accionesInmediatas || undefined,
+        evidencias: evidencias.length > 0 ? evidencias : undefined,
+        fecha: new Date(),
+        estado: 'reportado',
+        prioridad: form.prioridad as PrioridadIncidente,
+      });
+
+      setForm({
+        tipo: 'seguridad',
+        prioridad: 'media',
+        fechaIncidente: '',
+        horaIncidente: '',
+        ubicacion: '',
+        descripcion: '',
+        testigos: '',
+        accionesInmediatas: '',
+      });
+      setAdjuntos([]);
+      setOpen(false);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'No se pudo crear el incidente.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -108,6 +156,7 @@ export function ResidenteIncidentes() {
               <DialogTitle>Nuevo Reporte de Incidente</DialogTitle>
             </DialogHeader>
             <div className="grid gap-3 py-2">
+              {error && <p className="text-sm text-red-600">{error}</p>}
               <div className="grid md:grid-cols-2 gap-3">
                 <div>
                   <Label>Tipo</Label>
@@ -159,10 +208,41 @@ export function ResidenteIncidentes() {
                 <Label>Acciones inmediatas</Label>
                 <Textarea rows={2} value={form.accionesInmediatas} onChange={(e) => setForm((p) => ({ ...p, accionesInmediatas: e.target.value }))} />
               </div>
+              <div className="space-y-2">
+                <Label>Adjuntos (solo foto)</Label>
+                <Input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={(e) => {
+                    void handleAdjuntosChange(e.target.files);
+                    e.currentTarget.value = '';
+                  }}
+                />
+                {adjuntos.length > 0 && (
+                  <div className="space-y-1">
+                    {adjuntos.map((file, index) => (
+                      <div key={`${file.name}-${index}`} className="text-xs border rounded px-2 py-1 flex items-center justify-between">
+                        <span className="truncate pr-2">{file.name}</span>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-6 w-6"
+                          onClick={() => setAdjuntos((prev) => prev.filter((_, i) => i !== index))}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
-              <Button onClick={crearIncidente} disabled={!form.descripcion || !form.ubicacion}>Enviar reporte</Button>
+              <Button onClick={crearIncidente} disabled={!form.descripcion || !form.ubicacion || submitting}>
+                {submitting ? 'Enviando...' : 'Enviar reporte'}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -193,6 +273,16 @@ export function ResidenteIncidentes() {
                 <AlertTriangle className="h-3 w-3" />
                 {new Date(incidente.fecha).toLocaleString('es-CO')}
               </p>
+              {!!incidente.evidencias?.length && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {incidente.evidencias.map((url, idx) => (
+                    <Button key={`${incidente.id}-e-${idx}`} variant="outline" size="sm" onClick={() => window.open(url, '_blank')}>
+                      <Paperclip className="h-3 w-3 mr-1" />
+                      Evidencia {idx + 1}
+                    </Button>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </CardContent>

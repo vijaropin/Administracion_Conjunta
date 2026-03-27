@@ -7,7 +7,7 @@ import {
   onAuthStateChanged,
   type User as FirebaseUser 
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { auth, db } from '@/config/firebase';
 import type { Usuario } from '@/types';
 
@@ -23,6 +23,14 @@ interface AuthState {
   setUser: (user: Usuario | null) => void;
   clearError: () => void;
 }
+
+const normalizeUserFromDoc = (
+  raw: Partial<Usuario> | undefined,
+  uid: string
+): Usuario => ({
+  ...(raw as Usuario),
+  id: raw?.id || uid,
+});
 
 export const useAuthStore = create<AuthState>()(
   persist(
@@ -40,7 +48,10 @@ export const useAuthStore = create<AuthState>()(
           
           const userDoc = await getDoc(doc(db, 'usuarios', firebaseUser.uid));
           if (userDoc.exists()) {
-            const userData = userDoc.data() as Usuario;
+            const userData = normalizeUserFromDoc(userDoc.data() as Partial<Usuario>, firebaseUser.uid);
+            if (!userDoc.data()?.id) {
+              await updateDoc(doc(db, 'usuarios', firebaseUser.uid), { id: firebaseUser.uid });
+            }
             set({ 
               user: userData, 
               firebaseUser,
@@ -61,6 +72,18 @@ export const useAuthStore = create<AuthState>()(
       register: async (email: string, password: string, userData: Partial<Usuario>) => {
         set({ loading: true, error: null });
         try {
+          const tipoSolicitado = userData.tipo || 'residente';
+          const perfilesResidenciales = new Set(['residente', 'propietario_residente', 'arrendatario', 'propietario_no_residente']);
+
+          if (perfilesResidenciales.has(tipoSolicitado) && userData.unidad) {
+            const q = query(collection(db, 'usuarios'), where('unidad', '==', userData.unidad));
+            const existing = await getDocs(q);
+            const perfilesCasa = existing.docs.filter((d) => perfilesResidenciales.has((d.data()?.tipo as string) || ''));
+            if (perfilesCasa.length >= 4) {
+              throw new Error('La casa ya tiene el máximo de 4 perfiles residenciales registrados.');
+            }
+          }
+
           const userCredential = await createUserWithEmailAndPassword(auth, email, password);
           const firebaseUser = userCredential.user;
           
@@ -70,7 +93,7 @@ export const useAuthStore = create<AuthState>()(
             nombres: userData.nombres || '',
             apellidos: userData.apellidos || '',
             telefono: userData.telefono || '',
-            tipo: userData.tipo || 'residente',
+            tipo: tipoSolicitado as Usuario['tipo'],
             conjuntoId: userData.conjuntoId || '',
             unidad: userData.unidad,
             torre: userData.torre,
@@ -141,15 +164,27 @@ export const useAuthStore = create<AuthState>()(
 // Listener para cambios en el estado de autenticación
 export const initAuthListener = () => {
   onAuthStateChanged(auth, async (firebaseUser) => {
-    const { setUser } = useAuthStore.getState();
-    
     if (firebaseUser) {
       const userDoc = await getDoc(doc(db, 'usuarios', firebaseUser.uid));
       if (userDoc.exists()) {
-        setUser(userDoc.data() as Usuario);
+        const userData = normalizeUserFromDoc(userDoc.data() as Partial<Usuario>, firebaseUser.uid);
+        useAuthStore.setState({
+          user: userData,
+          firebaseUser,
+          loading: false,
+        });
+        if (!userDoc.data()?.id) {
+          await updateDoc(doc(db, 'usuarios', firebaseUser.uid), { id: firebaseUser.uid });
+        }
+      } else {
+        useAuthStore.setState({
+          user: null,
+          firebaseUser,
+          loading: false,
+        });
       }
     } else {
-      setUser(null);
+      useAuthStore.setState({ user: null, firebaseUser: null, loading: false });
     }
   });
 };

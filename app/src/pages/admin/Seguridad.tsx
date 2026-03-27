@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { useSeguridadStore } from '@/store/seguridadStore';
+import { useConjuntoStore } from '@/store/conjuntoStore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,15 +33,17 @@ import {
   CheckCircle,
   UserCheck
 } from 'lucide-react';
+import type { Visitante } from '@/types';
 
 
 export function Seguridad() {
   const { user } = useAuthStore();
+  const { conjuntoActual, fetchConjuntoById } = useConjuntoStore();
   const { visitantes, fetchVisitantes, createVisitante, registrarSalida } = useSeguridadStore();
   
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterFechaIngreso, setFilterFechaIngreso] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [,] = useState<'visitantes' | 'incidentes'>('visitantes');
   const [newVisitante, setNewVisitante] = useState({
     nombre: '',
     documento: '',
@@ -48,26 +51,51 @@ export function Seguridad() {
     unidadDestino: '',
     residenteAutoriza: '',
     tipo: 'visitante',
+    vehiculoTipo: 'ninguno',
     placaVehiculo: '',
     observaciones: ''
   });
 
+  const seguridadPerfil = user?.seguridadPerfil ?? 'control_acceso';
+  const puedeRegistrarSalidaVehiculos = user?.tipo === 'administrador' || seguridadPerfil === 'control_acceso';
+
   useEffect(() => {
     if (user?.conjuntoId) {
-      fetchVisitantes(user.conjuntoId);
+      void fetchVisitantes(user.conjuntoId);
+      void fetchConjuntoById(user.conjuntoId);
     }
-  }, [user?.conjuntoId]);
+  }, [user?.conjuntoId, fetchVisitantes, fetchConjuntoById]);
 
   const filteredVisitantes = visitantes.filter(visitante => 
-    visitante.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    visitante.documento.includes(searchTerm) ||
-    visitante.unidadDestino.includes(searchTerm)
+    (
+      visitante.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      visitante.documento.includes(searchTerm) ||
+      visitante.unidadDestino.includes(searchTerm)
+    ) &&
+    (
+      !filterFechaIngreso ||
+      new Date(visitante.fechaIngreso).toISOString().slice(0, 10) === filterFechaIngreso
+    )
   );
 
   const visitantesDentro = filteredVisitantes.filter(v => !v.fechaSalida);
 
   const handleCreateVisitante = async () => {
     if (!user?.conjuntoId || !user?.id) return;
+    if (!newVisitante.nombre || !newVisitante.documento || !newVisitante.unidadDestino || !newVisitante.residenteAutoriza) {
+      window.alert('Completa nombre, documento, unidad destino y residente que autoriza.');
+      return;
+    }
+    if ((newVisitante.vehiculoTipo === 'carro' || newVisitante.vehiculoTipo === 'moto') && !newVisitante.placaVehiculo) {
+      window.alert('Ingresa la placa del vehículo o moto.');
+      return;
+    }
+    const valorParqueadero =
+      newVisitante.vehiculoTipo === 'carro'
+        ? (conjuntoActual?.configuracionSeguridad?.valorParqueaderoVehiculo ?? 0)
+        : newVisitante.vehiculoTipo === 'moto'
+          ? (conjuntoActual?.configuracionSeguridad?.valorParqueaderoMoto ?? 0)
+          : 0;
     
     await createVisitante({
       conjuntoId: user.conjuntoId,
@@ -77,8 +105,11 @@ export function Seguridad() {
       unidadDestino: newVisitante.unidadDestino,
       residenteAutoriza: newVisitante.residenteAutoriza,
       fechaIngreso: new Date(),
-      tipo: newVisitante.tipo as any,
+      tipo: newVisitante.tipo as Visitante['tipo'],
       placaVehiculo: newVisitante.placaVehiculo || undefined,
+      vehiculoTipo: newVisitante.vehiculoTipo as 'ninguno' | 'carro' | 'moto',
+      valorParqueaderoConfigurado: valorParqueadero,
+      cobroEstado: newVisitante.vehiculoTipo === 'ninguno' ? 'no_aplica' : 'pendiente',
       observaciones: newVisitante.observaciones,
       registradoPor: user.id
     });
@@ -91,13 +122,32 @@ export function Seguridad() {
       unidadDestino: '',
       residenteAutoriza: '',
       tipo: 'visitante',
+      vehiculoTipo: 'ninguno',
       placaVehiculo: '',
       observaciones: ''
     });
   };
 
   const handleSalida = async (visitanteId: string) => {
-    await registrarSalida(visitanteId);
+    if (!puedeRegistrarSalidaVehiculos) {
+      window.alert('Tu perfil de seguridad no tiene permiso para registrar salida de vehículos y motos.');
+      return;
+    }
+    const visitante = visitantes.find((v) => v.id === visitanteId);
+    let cobroParqueadero: number | undefined;
+    if (visitante?.vehiculoTipo === 'carro' || visitante?.vehiculoTipo === 'moto') {
+      const sugerido = visitante.valorParqueaderoConfigurado ?? 0;
+      const valor = window.prompt('Valor cobrado por parqueadero al salir (COP):', String(sugerido));
+      if (!valor) return;
+      const parsed = Number(valor);
+      if (Number.isNaN(parsed) || parsed < 0) {
+        window.alert('Valor de cobro inválido.');
+        return;
+      }
+      cobroParqueadero = parsed;
+    }
+    await registrarSalida(visitanteId, { cobroParqueadero, registradoPor: user?.id });
+    window.alert('Salida registrada correctamente.');
   };
 
   return (
@@ -167,7 +217,7 @@ export function Seguridad() {
                 </Select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Unidad Destino *</Label>
                   <Input 
@@ -183,6 +233,20 @@ export function Seguridad() {
                     value={newVisitante.residenteAutoriza}
                     onChange={(e) => setNewVisitante({...newVisitante, residenteAutoriza: e.target.value})}
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label>Vehículo</Label>
+                  <Select
+                    value={newVisitante.vehiculoTipo}
+                    onValueChange={(v) => setNewVisitante({ ...newVisitante, vehiculoTipo: v })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ninguno">Sin vehículo</SelectItem>
+                      <SelectItem value="carro">Carro</SelectItem>
+                      <SelectItem value="moto">Moto</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
@@ -217,6 +281,14 @@ export function Seguridad() {
         </Dialog>
       </div>
 
+      {!puedeRegistrarSalidaVehiculos && (
+        <Card className="border-amber-200 bg-amber-50/60">
+          <CardContent className="py-3 text-sm text-amber-800">
+            Perfil de seguridad "Incidentes": puedes registrar novedades, pero no salida/cobro de vehículos y motos.
+          </CardContent>
+        </Card>
+      )}
+
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
@@ -246,20 +318,27 @@ export function Seguridad() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {visitantes.filter(v => v.placaVehiculo).length}
+              {visitantes.filter(v => v.vehiculoTipo === 'carro' || v.vehiculoTipo === 'moto').length}
             </div>
           </CardContent>
         </Card>
       </div>
 
       {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="relative md:col-span-2">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Buscar por nombre, documento o unidad..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10"
+          />
+        </div>
         <Input
-          placeholder="Buscar por nombre, documento o unidad..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="pl-10"
+          type="date"
+          value={filterFechaIngreso}
+          onChange={(e) => setFilterFechaIngreso(e.target.value)}
         />
       </div>
 
@@ -278,6 +357,7 @@ export function Seguridad() {
                   <th className="text-left py-3 px-4 font-medium">Tipo</th>
                   <th className="text-left py-3 px-4 font-medium">Destino</th>
                   <th className="text-left py-3 px-4 font-medium">Ingreso</th>
+                  <th className="text-left py-3 px-4 font-medium">Cobro</th>
                   <th className="text-left py-3 px-4 font-medium">Estado</th>
                   <th className="text-left py-3 px-4 font-medium">Acciones</th>
                 </tr>
@@ -298,6 +378,13 @@ export function Seguridad() {
                       })}
                     </td>
                     <td className="py-3 px-4">
+                      {visitante.cobroEstado === 'no_aplica'
+                        ? 'No aplica'
+                        : visitante.cobroEstado === 'cobrado'
+                          ? `$${Number(visitante.cobroParqueadero || 0).toLocaleString('es-CO')}`
+                          : `$${Number(visitante.valorParqueaderoConfigurado || 0).toLocaleString('es-CO')} (pendiente)`}
+                    </td>
+                    <td className="py-3 px-4">
                       <Badge 
                         variant={visitante.fechaSalida ? 'secondary' : 'default'}
                         className="flex items-center gap-1 w-fit"
@@ -315,6 +402,7 @@ export function Seguridad() {
                           size="sm" 
                           variant="outline"
                           onClick={() => handleSalida(visitante.id)}
+                          disabled={!puedeRegistrarSalidaVehiculos}
                         >
                           <LogOut className="h-4 w-4 mr-1" />
                           Registrar Salida
