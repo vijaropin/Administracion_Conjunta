@@ -4,7 +4,6 @@ import {
   collection,
   doc,
   deleteDoc,
-  getDoc,
   getDocs,
   orderBy,
   query,
@@ -12,7 +11,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { auth, db } from '@/config/firebase';
-import { fetchBackendPagos, generarBackendPagos, registrarBackendPago } from '@/lib/backend';
+import { cerrarBackendCajaMenor, crearBackendCajaMenor, crearBackendGastoCajaMenor, fetchBackendPagos, generarBackendPagos, registrarBackendPago } from '@/lib/backend';
 import { duracionMs, iniciarMedicion, registrarLogTiempoRespuesta } from '@/lib/responseTimeLogger';
 import type { CajaMenor, ConceptoPagoConfig, GastoCajaMenor, Pago } from '@/types';
 
@@ -136,7 +135,6 @@ const toLocalDate = (value: unknown): Date => {
 };
 
 const toLocalDateOpt = (value: unknown): Date | undefined => (value ? toLocalDate(value) : undefined);
-const toDateOnly = (value: Date): Date => new Date(value.getFullYear(), value.getMonth(), value.getDate());
 
 // Firestore no permite enviar valores `undefined` dentro del payload.
 const omitUndefined = <T extends Record<string, unknown>>(obj: T): Partial<T> =>
@@ -149,11 +147,6 @@ const normalizePago = (pago: Pago): Pago => ({
   fechaCreacion: pago.fechaCreacion ? toLocalDate(pago.fechaCreacion) : undefined,
   multaFecha: pago.multaFecha ? toLocalDate(pago.multaFecha) : undefined,
 });
-
-const isCuotaAdministracion = (concepto: string): boolean => {
-  const value = concepto.trim().toLowerCase();
-  return value.includes('cuota') && value.includes('administr');
-};
 
 const recalcPagosState = (pagos: Pago[]) => ({
   pagos,
@@ -522,29 +515,27 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
   createCajaMenor: async (data) => {
     set({ loading: true, error: null });
     try {
-      const payload: Omit<CajaMenor, 'id'> = {
-        ...data,
-        fechaAprobacion: toLocalDate(data.fechaAprobacion),
-      };
-      const docRef = await addDoc(collection(db, 'cajasMenores'), payload);
-      set({ cajasMenores: [{ id: docRef.id, ...payload }, ...get().cajasMenores], loading: false });
-      return docRef.id;
+      const id = await crearBackendCajaMenor({
+        montoAprobado: data.montoAprobado,
+        fechaAprobacion: toLocalDate(data.fechaAprobacion).toISOString(),
+        observaciones: data.observaciones,
+      });
+      await get().fetchCajasMenores(data.conjuntoId);
+      return id;
     } catch (error: any) {
       set({ error: error.message, loading: false });
       throw error;
     }
   },
 
-  cerrarCajaMenor: async (id, cerradoPor) => {
+  cerrarCajaMenor: async (id, _cerradoPor) => {
     set({ loading: true, error: null });
     try {
-      const payload = {
-        estado: 'cerrada',
-        fechaCierre: new Date(),
-        cerradoPor,
-      };
-      await updateDoc(doc(db, 'cajasMenores', id), payload as Record<string, unknown>);
-      const cajas = get().cajasMenores.map((c) => (c.id === id ? { ...c, ...(payload as any) } : c));
+      await cerrarBackendCajaMenor(id);
+      
+      const cajas = get().cajasMenores.map((c) =>
+        c.id === id ? { ...c, estado: 'cerrada' as const, fechaCierre: new Date() } : c
+      );
       set({ cajasMenores: cajas, loading: false });
     } catch (error: any) {
       set({ error: error.message, loading: false });
@@ -554,13 +545,16 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
   createGastoCajaMenor: async (data) => {
     set({ loading: true, error: null });
     try {
-      const payload: Omit<GastoCajaMenor, 'id'> = {
-        ...data,
-        fechaGasto: toLocalDate(data.fechaGasto),
-      };
-      const docRef = await addDoc(collection(db, 'gastosCajaMenor'), payload);
-      set({ gastosCajaMenor: [{ id: docRef.id, ...payload }, ...get().gastosCajaMenor], loading: false });
-      return docRef.id;
+      const id = await crearBackendGastoCajaMenor({
+        cajaId: data.cajaMenorId,
+        concepto: data.concepto,
+        valor: data.valor,
+        fechaGasto: toLocalDate(data.fechaGasto).toISOString(),
+        soporteNombre: data.soporteNombre || undefined,
+        soporteUrl: data.soporteUrl || undefined,
+      });
+      await get().fetchGastosCajaMenor(data.cajaMenorId);
+      return id;
     } catch (error: any) {
       set({ error: error.message, loading: false });
       throw error;

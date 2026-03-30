@@ -75,6 +75,7 @@ Administracion Conjunta/
 - `/admin/dashboard`
 - `/admin/conjunto`
 - `/admin/finanzas`
+- `/admin/monitoreo`
 - `/admin/comunicados`
 - `/admin/asambleas`
 - `/admin/seguridad`
@@ -92,6 +93,7 @@ Administracion Conjunta/
 ### Contadora
 - `/contadora/dashboard`
 - `/contadora/finanzas`
+- `/contadora/monitoreo`
 - `/contadora/documentos`
 
 ### Seguridad
@@ -138,12 +140,18 @@ Resumen rapido (rol -> ruta inicial):
 - Votacion SI/NO por propietario.
 - Bitacora de eventos inmodificable (append-only).
 - Control de quorum y cierre de votacion por tiempo o cierre manual.
+- Reporte automatico de resultados de votacion en tabla exportable (CSV/PDF).
 
 ### Finanzas
 - Conceptos de pago configurables (sin borrado, con historial de cambios).
 - Consecutivo general y por residente en pagos.
 - Caja menor (monto aprobado, gastos, soportes).
 - Exportacion real a Excel (`.xls`) y PDF desde la tabla de pagos.
+
+### Monitoreo
+- Cronometro visible en pantalla para evidencia operativa.
+- Log de tiempos de respuesta (pagos, votaciones y avisos).
+- Exportacion de bitacora a CSV.
 
 ### Documentos
 - Subida de PDF por selector y por arrastre (drag & drop).

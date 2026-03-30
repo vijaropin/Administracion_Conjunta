@@ -21,6 +21,7 @@ import {
   Wallet,
   Receipt,
   BookOpen,
+  Activity,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -50,6 +51,7 @@ export function Sidebar({ className }: SidebarProps) {
     { href: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/admin/conjunto', label: 'Mi Conjunto', icon: Building2 },
     { href: '/admin/finanzas', label: 'Finanzas', icon: DollarSign },
+    { href: '/admin/monitoreo', label: 'Monitoreo', icon: Activity },
     { href: '/admin/comunicados', label: 'Comunicados', icon: MessageSquare },
     { href: '/admin/asambleas', label: 'Asambleas', icon: Vote },
     { href: '/admin/seguridad', label: 'Seguridad', icon: Shield },
@@ -77,6 +79,7 @@ export function Sidebar({ className }: SidebarProps) {
   const contadoraLinks = [
     { href: '/contadora/dashboard', label: 'Dashboard Contable', icon: Wallet },
     { href: '/contadora/finanzas', label: 'Pagos y Cartera', icon: DollarSign },
+    { href: '/contadora/monitoreo', label: 'Monitoreo', icon: Activity },
     { href: '/contadora/comunicados', label: 'Comunicados', icon: MessageSquare },
     { href: '/contadora/documentos', label: 'Soportes', icon: Receipt },
   ];

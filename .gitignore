@@ -67,3 +67,7 @@ node_modules/
 
 # dataconnect generated files
 .dataconnect
+
+# Performance artifacts
+backend/tests/performance/reports/
+backend/tests/performance/tokens/

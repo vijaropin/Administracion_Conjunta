@@ -50,6 +50,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
+import { exportarBackendPagos } from '@/lib/backend';
 import {
   BarChart,
   Bar,
@@ -471,83 +472,24 @@ export function Finanzas() {
       window.alert(e?.message ?? 'No se pudo registrar el gasto');
     }
   };
-const descargarExcel = () => {
-    const header = ['Consecutivo General', 'Consecutivo Residente', 'Concepto', 'Unidad', 'Residente', 'Valor', 'Estado', 'Fecha pago oportuno'];
-    const rows = filteredPagos.map((p) => [
-      p.consecutivoGeneral || '',
-      p.consecutivoResidente || '',
-      p.concepto,
-      p.unidadId,
-      p.residenteId,
-      String(p.valor),
-      p.estado,
-      new Date(p.fechaVencimiento).toLocaleDateString('es-CO'),
-    ]);
-
-    let xml = '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>';
-    xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="Pagos"><Table>';
-    xml += `<Row>${header.map((h) => `<Cell><Data ss:Type="String">${h}</Data></Cell>`).join('')}</Row>`;
-    rows.forEach((row) => {
-      xml += `<Row>${row.map((cell) => `<Cell><Data ss:Type="String">${String(cell).replace(/&/g, '&amp;').replace(/</g, '&lt;')}</Data></Cell>`).join('')}</Row>`;
-    });
-    xml += '</Table></Worksheet></Workbook>';
-
-    const blob = new Blob([xml], { type: 'application/vnd.ms-excel' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `pagos_${new Date().toISOString().slice(0, 10)}.xls`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const descargarExcel = async () => {
+    try {
+      await exportarBackendPagos({ formato: 'excel', estado: filterStatus });
+    } catch (error) {
+      window.alert('No se pudo descargar el archivo Excel.');
+      console.error(error);
+    }
   };
 
-  const descargarPdf = () => {
-    const lines = [
-      'REPORTE DE PAGOS',
-      `Fecha: ${new Date().toLocaleDateString('es-CO')}`,
-      '',
-      'Consecutivo | Unidad | Concepto | Valor | Estado',
-      ...filteredPagos.slice(0, 60).map((p) => `${p.consecutivoGeneral || '-'} | ${p.unidadId} | ${p.concepto} | ${p.valor} | ${p.estado}`),
-    ];
-
-    const escape = (text: string) =>
-      text.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
-    let y = 800;
-    const content = lines.map((line) => {
-      const cmd = `BT /F1 10 Tf 40 ${y} Td (${escape(line)}) Tj ET`;
-      y -= 12;
-      return cmd;
-    }).join('\n');
-
-    const objects = [];
-    objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
-    objects[2] = '<< /Type /Pages /Kids [3 0 R] /Count 1 >>';
-    objects[3] = '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>';
-    objects[4] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
-    objects[5] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
-
-    let pdf = '%PDF-1.4\n';
-    const offsets = [0];
-    for (let i = 1; i <= 5; i++) {
-      offsets[i] = pdf.length;
-      pdf += `${i} 0 obj\n${objects[i]}\nendobj\n`;
+  const descargarPdf = async () => {
+    try {
+      await exportarBackendPagos({ formato: 'pdf', estado: filterStatus });
+    } catch (error) {
+      window.alert('No se pudo descargar el archivo PDF.');
+      console.error(error);
     }
-
-    const xrefStart = pdf.length;
-    pdf += `xref\n0 6\n0000000000 65535 f \n`;
-    for (let i = 1; i <= 5; i++) {
-      pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
-    }
-    pdf += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
-
-    const blob = new Blob([pdf], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `pagos_${new Date().toISOString().slice(0, 10)}.pdf`;
-    a.click();
-    URL.revokeObjectURL(url);
   };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">

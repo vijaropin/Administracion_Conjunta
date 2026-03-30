@@ -719,6 +719,18 @@ export interface Notificacion {
   referenciaId?: string;
 }
 
+export interface LogTiempoRespuesta {
+  id: string;
+  conjuntoId: string;
+  usuarioId?: string;
+  modulo: 'pagos' | 'votaciones' | 'avisos';
+  accion: string;
+  duracionMs: number;
+  estado: 'ok' | 'error';
+  detalle?: string;
+  fecha: Date;
+}
+
 export interface DashboardStats {
   totalUnidades: number;
   unidadesOcupadas: number;

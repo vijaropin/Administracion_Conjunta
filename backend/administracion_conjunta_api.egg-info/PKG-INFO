@@ -9,10 +9,14 @@ Requires-Dist: uvicorn[standard]<1.0.0,>=0.35.0
 Requires-Dist: pydantic-settings<3.0.0,>=2.10.0
 Requires-Dist: firebase-admin<8.0.0,>=7.1.0
 Requires-Dist: python-multipart<1.0.0,>=0.0.20
+Requires-Dist: openpyxl<4.0.0,>=3.1.0
+Requires-Dist: fpdf2<3.0.0,>=2.7.0
 Provides-Extra: dev
 Requires-Dist: httpx<1.0.0,>=0.28.0; extra == "dev"
 Requires-Dist: pytest<9.0.0,>=8.4.0; extra == "dev"
 Requires-Dist: ruff<1.0.0,>=0.12.0; extra == "dev"
+Provides-Extra: performance
+Requires-Dist: locust<3.0.0,>=2.37.0; extra == "performance"
 
 # Backend Python
 
@@ -88,4 +92,35 @@ curl http://localhost:8000/api/v1/auth/me \
 ```bash
 curl "http://localhost:8000/api/v1/pagos?limit=20" \
   -H "Authorization: Bearer TU_TOKEN_FIREBASE"
+```
+
+## Pruebas de concurrencia y estabilidad (Locust)
+
+Se agregó un escenario de carga en:
+
+- `tests/performance/locustfile.py`
+- `tests/performance/README.md`
+
+Instalación:
+
+```bash
+pip install -e ".[dev,performance]"
+```
+
+Ejecución UI para pantallazo de usuarios concurrentes + métricas:
+
+```bash
+locust -f tests/performance/locustfile.py --host http://localhost:8000
+```
+
+Generación automática de tokens para usuarios QA:
+
+```bash
+python tests/performance/generate_locust_tokens.py --api-key TU_FIREBASE_WEB_API_KEY --max-users 120
+```
+
+Headless con reporte HTML/CSV:
+
+```bash
+locust -f tests/performance/locustfile.py --host http://localhost:8000 --headless --users 120 --spawn-rate 12 --run-time 8m --html tests/performance/reports/locust-report.html --csv tests/performance/reports/locust
 ```

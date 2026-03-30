@@ -12,6 +12,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { auth, db } from '@/config/firebase';
+import { duracionMs, iniciarMedicion, registrarLogTiempoRespuesta } from '@/lib/responseTimeLogger';
 import type { Asamblea, AsambleaBitacora, Comunicado, Notificacion, Votacion, VotoRegistrado, Sugerencia } from '@/types';
 
 interface ComunicacionState {
@@ -231,6 +232,7 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
   },
 
   createComunicado: async (comunicado) => {
+    const inicio = iniciarMedicion();
     set({ loading: true, error: null });
     try {
       const docRef = await addDoc(collection(db, 'comunicados'), comunicado);
@@ -239,9 +241,27 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
         comunicados: [comunicadoCreado, ...get().comunicados],
         loading: false,
       });
+      await registrarLogTiempoRespuesta({
+        conjuntoId: comunicado.conjuntoId,
+        usuarioId: comunicado.autorId,
+        modulo: 'avisos',
+        accion: 'crear_comunicado',
+        duracionMs: duracionMs(inicio),
+        estado: 'ok',
+        detalle: `Comunicado ${docRef.id} publicado`,
+      });
       return docRef.id;
     } catch (error: any) {
       set({ error: error.message, loading: false });
+      await registrarLogTiempoRespuesta({
+        conjuntoId: comunicado.conjuntoId,
+        usuarioId: comunicado.autorId,
+        modulo: 'avisos',
+        accion: 'crear_comunicado',
+        duracionMs: duracionMs(inicio),
+        estado: 'error',
+        detalle: error?.message || 'Error no controlado al publicar comunicado',
+      });
       throw error;
     }
   },
@@ -331,6 +351,8 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
   },
 
   cerrarVotacion: async (votacionId, usuarioId) => {
+    const inicio = iniciarMedicion();
+    let conjuntoIdOperacion = '';
     set({ loading: true, error: null });
     try {
       const votacionRef = doc(db, 'votaciones', votacionId);
@@ -338,6 +360,7 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
       if (!votacionDoc.exists()) throw new Error('Votación no encontrada');
       const votacion = normalizeVotacion(votacionDoc.id, votacionDoc.data() as Record<string, unknown>);
       const conjuntoId = votacion.conjuntoId || await getAsambleaConjuntoId(votacion.asambleaId);
+      conjuntoIdOperacion = conjuntoId;
 
       await updateDoc(votacionRef, { estado: 'cerrada', fechaCierre: new Date() });
       set({
@@ -366,13 +389,35 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
       }
 
       set({ loading: false });
+      await registrarLogTiempoRespuesta({
+        conjuntoId: conjuntoIdOperacion,
+        usuarioId,
+        modulo: 'votaciones',
+        accion: 'cerrar_votacion',
+        duracionMs: duracionMs(inicio),
+        estado: 'ok',
+        detalle: `Votación ${votacionId} cerrada`,
+      });
     } catch (error: any) {
       set({ error: error.message, loading: false });
+      if (conjuntoIdOperacion) {
+        await registrarLogTiempoRespuesta({
+          conjuntoId: conjuntoIdOperacion,
+          usuarioId,
+          modulo: 'votaciones',
+          accion: 'cerrar_votacion',
+          duracionMs: duracionMs(inicio),
+          estado: 'error',
+          detalle: error?.message || 'Error no controlado al cerrar votación',
+        });
+      }
       throw error;
     }
   },
 
   votar: async (votacionId, opcion, usuarioId, unidadId) => {
+    const inicio = iniciarMedicion();
+    let conjuntoIdOperacion = '';
     set({ loading: true, error: null });
     try {
       const votacionRef = doc(db, 'votaciones', votacionId);
@@ -382,6 +427,7 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
 
       const votacion = normalizeVotacion(votacionDoc.id, votacionDoc.data() as Record<string, unknown>);
       const conjuntoId = votacion.conjuntoId || await getAsambleaConjuntoId(votacion.asambleaId);
+      conjuntoIdOperacion = conjuntoId;
       const fechaCierre = toDate(votacion.fechaCierre);
 
       if (votacion.estado !== 'activa') throw new Error('La votación ya se encuentra cerrada');
@@ -442,8 +488,28 @@ export const useComunicacionStore = create<ComunicacionState>((set, get) => ({
         ),
         loading: false,
       });
+      await registrarLogTiempoRespuesta({
+        conjuntoId: conjuntoIdOperacion,
+        usuarioId,
+        modulo: 'votaciones',
+        accion: 'emitir_voto',
+        duracionMs: duracionMs(inicio),
+        estado: 'ok',
+        detalle: `Voto ${opcion} registrado en votación ${votacionId}`,
+      });
     } catch (error: any) {
       set({ error: error.message, loading: false });
+      if (conjuntoIdOperacion) {
+        await registrarLogTiempoRespuesta({
+          conjuntoId: conjuntoIdOperacion,
+          usuarioId,
+          modulo: 'votaciones',
+          accion: 'emitir_voto',
+          duracionMs: duracionMs(inicio),
+          estado: 'error',
+          detalle: error?.message || 'Error no controlado al votar',
+        });
+      }
       throw error;
     }
   },

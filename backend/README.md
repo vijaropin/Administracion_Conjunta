@@ -73,3 +73,34 @@ curl http://localhost:8000/api/v1/auth/me \
 curl "http://localhost:8000/api/v1/pagos?limit=20" \
   -H "Authorization: Bearer TU_TOKEN_FIREBASE"
 ```
+
+## Pruebas de concurrencia y estabilidad (Locust)
+
+Se agregó un escenario de carga en:
+
+- `tests/performance/locustfile.py`
+- `tests/performance/README.md`
+
+Instalación:
+
+```bash
+pip install -e ".[dev,performance]"
+```
+
+Ejecución UI para pantallazo de usuarios concurrentes + métricas:
+
+```bash
+locust -f tests/performance/locustfile.py --host http://localhost:8000
+```
+
+Generación automática de tokens para usuarios QA:
+
+```bash
+python tests/performance/generate_locust_tokens.py --api-key TU_FIREBASE_WEB_API_KEY --max-users 120
+```
+
+Headless con reporte HTML/CSV:
+
+```bash
+locust -f tests/performance/locustfile.py --host http://localhost:8000 --headless --users 120 --spawn-rate 12 --run-time 8m --html tests/performance/reports/locust-report.html --csv tests/performance/reports/locust
+```

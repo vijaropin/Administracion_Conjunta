@@ -296,6 +296,12 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /logsTiemposRespuesta/{id} {
+      allow read: if sameConjuntoDoc() && (isAdmin() || isContadora() || isConsejo());
+      allow create: if sameConjuntoReq() && canReadConjuntoData();
+      allow update, delete: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

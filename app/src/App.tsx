@@ -19,6 +19,7 @@ import { AdminConjunto } from '@/pages/admin/Conjunto';
 import { AdminDashboard } from '@/pages/admin/Dashboard';
 import { AdminDocumentos } from '@/pages/admin/Documentos';
 import { Finanzas } from '@/pages/admin/Finanzas';
+import { AdminMonitoreo } from '@/pages/admin/Monitoreo';
 import { AdminParqueaderos } from '@/pages/admin/Parqueaderos';
 import { AdminReservas } from '@/pages/admin/Reservas';
 import { AdminResidentes } from '@/pages/admin/Residentes';
@@ -103,6 +104,7 @@ function App() {
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<AdminDashboard />} />
           <Route path="finanzas" element={<Finanzas />} />
+          <Route path="monitoreo" element={<AdminMonitoreo />} />
           <Route path="comunicados" element={<Comunicados />} />
           <Route path="seguridad" element={<AdminSeguridad />} />
           <Route path="parqueaderos" element={<AdminParqueaderos />} />
@@ -170,6 +172,7 @@ function App() {
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<ContadoraDashboard />} />
           <Route path="finanzas" element={<Finanzas />} />
+          <Route path="monitoreo" element={<AdminMonitoreo />} />
           <Route path="comunicados" element={<Comunicados />} />
           <Route path="documentos" element={<AdminDocumentos />} />
         </Route>

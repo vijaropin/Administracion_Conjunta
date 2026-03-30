@@ -108,7 +108,8 @@ export function ResidenteAsambleas() {
               const si = votacion.votos?.SI || 0;
               const no = votacion.votos?.NO || 0;
               const total = si + no;
-              const porcentajeSi = total > 0 ? ((si / total) * 100).toFixed(1) : '0.0';
+              const porcentajeSi = total > 0 ? Math.round((si / total) * 100) : 0;
+              const porcentajeNo = total > 0 ? 100 - porcentajeSi : 0;
 
               return (
                 <div key={votacion.id} className="border rounded-lg p-3 space-y-3">
@@ -121,6 +122,28 @@ export function ResidenteAsambleas() {
                   <div className="flex gap-2 text-xs">
                     <Badge variant="outline">Total votos: {total}</Badge>
                     <Badge variant="outline">Aprobación general: {porcentajeSi}% SI</Badge>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">Gráfico de votación</p>
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span>SI</span>
+                        <span>{si} votos ({porcentajeSi}%)</span>
+                      </div>
+                      <div className="h-2 w-full rounded bg-emerald-100 overflow-hidden">
+                        <div className="h-full bg-emerald-500 transition-all" style={{ width: `${porcentajeSi}%` }} />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span>NO</span>
+                        <span>{no} votos ({porcentajeNo}%)</span>
+                      </div>
+                      <div className="h-2 w-full rounded bg-rose-100 overflow-hidden">
+                        <div className="h-full bg-rose-500 transition-all" style={{ width: `${porcentajeNo}%` }} />
+                      </div>
+                    </div>
                   </div>
 
                   <div className="flex gap-2">

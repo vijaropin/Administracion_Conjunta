@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { CheckCircle2, Clock3, Plus, Vote, ShieldCheck, AlertCircle } from 'lucide-react';
+import { CheckCircle2, Clock3, Plus, Vote, ShieldCheck, AlertCircle, Download } from 'lucide-react';
 import { toast } from 'sonner';
 
 const toDate = (value: unknown): Date => {
@@ -33,6 +33,7 @@ const toDate = (value: unknown): Date => {
 };
 
 const normalizeText = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
+const truncateText = (value: string, max = 72) => (value.length > max ? `${value.slice(0, max - 3)}...` : value);
 
 const sameAsambleaConfig = (
   asamblea: {
@@ -124,6 +125,119 @@ export function AdminAsambleas() {
     () => votaciones.filter((v) => v.asambleaId === selectedAsambleaId),
     [votaciones, selectedAsambleaId]
   );
+  const reporteVotaciones = useMemo(
+    () =>
+      votacionesAsamblea.map((votacion) => {
+        const votosSi = votacion.votos?.SI || 0;
+        const votosNo = votacion.votos?.NO || 0;
+        const totalVotos = votosSi + votosNo;
+        const porcentajeSi = totalVotos > 0 ? Math.round((votosSi / totalVotos) * 100) : 0;
+        const porcentajeNo = totalVotos > 0 ? Math.round((votosNo / totalVotos) * 100) : 0;
+        return {
+          pregunta: votacion.pregunta,
+          votosSi,
+          votosNo,
+          totalVotos,
+          porcentajeSi,
+          porcentajeNo,
+          estado: votacion.estado,
+          cierre: votacion.fechaCierre ? toDate(votacion.fechaCierre).toLocaleString('es-CO') : 'Sin cierre',
+        };
+      }),
+    [votacionesAsamblea]
+  );
+  const fechaReporte = useMemo(() => new Date(), [selectedAsambleaId, reporteVotaciones]);
+
+  const descargarReporteVotacionesCsv = () => {
+    if (!selectedAsamblea || reporteVotaciones.length === 0) return;
+
+    const headers = ['Asamblea', 'Pregunta', 'SI', 'NO', 'Total', '% SI', '% NO', 'Estado', 'Cierre'];
+    const escapeCsv = (value: string | number) => {
+      const text = String(value ?? '');
+      if (text.includes(',') || text.includes('"') || text.includes('\n')) {
+        return `"${text.replace(/"/g, '""')}"`;
+      }
+      return text;
+    };
+
+    const rows = reporteVotaciones.map((row) => [
+      selectedAsamblea.titulo,
+      row.pregunta,
+      row.votosSi,
+      row.votosNo,
+      row.totalVotos,
+      `${row.porcentajeSi}%`,
+      `${row.porcentajeNo}%`,
+      row.estado,
+      row.cierre,
+    ]);
+
+    const csvContent = [headers, ...rows].map((row) => row.map(escapeCsv).join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `reporte_votaciones_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success('Reporte de votaciones descargado en CSV.');
+  };
+
+  const descargarReporteVotacionesPdf = () => {
+    if (!selectedAsamblea || reporteVotaciones.length === 0) return;
+
+    const lines = [
+      'REPORTE DE RESULTADOS DE VOTACION',
+      `Asamblea: ${selectedAsamblea.titulo}`,
+      `Fecha de generacion: ${fechaReporte.toLocaleString('es-CO')}`,
+      '',
+      'Pregunta | SI | NO | Total | % SI | % NO | Estado',
+      ...reporteVotaciones.slice(0, 45).map((row) =>
+        `${truncateText(row.pregunta, 40)} | ${row.votosSi} | ${row.votosNo} | ${row.totalVotos} | ${row.porcentajeSi}% | ${row.porcentajeNo}% | ${row.estado}`
+      ),
+    ];
+
+    const escape = (text: string) => text.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+    let y = 800;
+    const content = lines
+      .map((line) => {
+        const command = `BT /F1 9 Tf 30 ${y} Td (${escape(line)}) Tj ET`;
+        y -= 12;
+        return command;
+      })
+      .join('\n');
+
+    const objects: string[] = [];
+    objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+    objects[2] = '<< /Type /Pages /Kids [3 0 R] /Count 1 >>';
+    objects[3] =
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>';
+    objects[4] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+    objects[5] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
+
+    let pdf = '%PDF-1.4\n';
+    const offsets = [0];
+    for (let i = 1; i <= 5; i++) {
+      offsets[i] = pdf.length;
+      pdf += `${i} 0 obj\n${objects[i]}\nendobj\n`;
+    }
+
+    const xrefStart = pdf.length;
+    pdf += 'xref\n0 6\n0000000000 65535 f \n';
+    for (let i = 1; i <= 5; i++) {
+      pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+    }
+    pdf += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+
+    const blob = new Blob([pdf], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `reporte_votaciones_${new Date().toISOString().slice(0, 10)}.pdf`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success('Reporte de votaciones descargado en PDF.');
+  };
 
   const crearAsamblea = async () => {
     if (!user?.conjuntoId || !user?.id || !isAdmin) return;
@@ -323,16 +437,43 @@ export function AdminAsambleas() {
                 </div>
 
                 {votacionesAsamblea.map((votacion) => {
-                  const totalVotos = (votacion.votos?.SI || 0) + (votacion.votos?.NO || 0);
+                  const votosSi = votacion.votos?.SI || 0;
+                  const votosNo = votacion.votos?.NO || 0;
+                  const totalVotos = votosSi + votosNo;
+                  const porcentajeSi = totalVotos > 0 ? Math.round((votosSi / totalVotos) * 100) : 0;
+                  const porcentajeNo = totalVotos > 0 ? 100 - porcentajeSi : 0;
                   const cierre = votacion.fechaCierre ? toDate(votacion.fechaCierre) : null;
                   return (
                     <div key={votacion.id} className="border rounded-lg p-3 text-sm space-y-2">
                       <p className="font-medium flex items-center gap-2"><Vote className="h-4 w-4" />{votacion.pregunta}</p>
                       <div className="flex gap-2">
-                        <Badge variant="outline">SI: {votacion.votos?.SI || 0}</Badge>
-                        <Badge variant="outline">NO: {votacion.votos?.NO || 0}</Badge>
+                        <Badge variant="outline">SI: {votosSi}</Badge>
+                        <Badge variant="outline">NO: {votosNo}</Badge>
                         <Badge variant="secondary">Total: {totalVotos}</Badge>
                       </div>
+
+                      <div className="space-y-2">
+                        <p className="text-xs font-medium text-muted-foreground">Gráfico de votación</p>
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span>SI</span>
+                            <span>{votosSi} votos ({porcentajeSi}%)</span>
+                          </div>
+                          <div className="h-2 w-full rounded bg-emerald-100 overflow-hidden">
+                            <div className="h-full bg-emerald-500 transition-all" style={{ width: `${porcentajeSi}%` }} />
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span>NO</span>
+                            <span>{votosNo} votos ({porcentajeNo}%)</span>
+                          </div>
+                          <div className="h-2 w-full rounded bg-rose-100 overflow-hidden">
+                            <div className="h-full bg-rose-500 transition-all" style={{ width: `${porcentajeNo}%` }} />
+                          </div>
+                        </div>
+                      </div>
+
                       <div className="text-xs text-muted-foreground flex items-center gap-1">
                         <Clock3 className="h-3 w-3" />
                         Cierre: {cierre ? cierre.toLocaleString('es-CO') : 'Sin cierre'}
@@ -343,6 +484,77 @@ export function AdminAsambleas() {
                     </div>
                   );
                 })}
+
+                <div className="border rounded-lg p-3 space-y-3">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <p className="font-medium text-sm">Reporte automático de votaciones</p>
+                      <p className="text-xs text-muted-foreground">
+                        Tabla generada automáticamente para pantallazo de evidencia y exportación.
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Fecha de generación: {fechaReporte.toLocaleString('es-CO')}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={descargarReporteVotacionesCsv}
+                        disabled={reporteVotaciones.length === 0}
+                      >
+                        <Download className="h-4 w-4 mr-1" />
+                        CSV
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={descargarReporteVotacionesPdf}
+                        disabled={reporteVotaciones.length === 0}
+                      >
+                        <Download className="h-4 w-4 mr-1" />
+                        PDF
+                      </Button>
+                    </div>
+                  </div>
+
+                  {reporteVotaciones.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      No hay votaciones registradas para generar el reporte.
+                    </p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b">
+                            <th className="text-left py-2 pr-2 font-medium">Pregunta</th>
+                            <th className="text-right py-2 pr-2 font-medium">SI</th>
+                            <th className="text-right py-2 pr-2 font-medium">NO</th>
+                            <th className="text-right py-2 pr-2 font-medium">Total</th>
+                            <th className="text-right py-2 pr-2 font-medium">% SI</th>
+                            <th className="text-right py-2 pr-2 font-medium">% NO</th>
+                            <th className="text-left py-2 pr-2 font-medium">Estado</th>
+                            <th className="text-left py-2 font-medium">Cierre</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {reporteVotaciones.map((row, idx) => (
+                            <tr key={`${row.pregunta}-${idx}`} className="border-b">
+                              <td className="py-2 pr-2">{row.pregunta}</td>
+                              <td className="py-2 pr-2 text-right">{row.votosSi}</td>
+                              <td className="py-2 pr-2 text-right">{row.votosNo}</td>
+                              <td className="py-2 pr-2 text-right">{row.totalVotos}</td>
+                              <td className="py-2 pr-2 text-right">{row.porcentajeSi}%</td>
+                              <td className="py-2 pr-2 text-right">{row.porcentajeNo}%</td>
+                              <td className="py-2 pr-2">{row.estado}</td>
+                              <td className="py-2">{row.cierre}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
 
                 <div>
                   <p className="font-medium text-sm mb-2">Bitácora (solo lectura)</p>

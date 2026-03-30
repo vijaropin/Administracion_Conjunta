@@ -22,3 +22,4 @@ app/schemas/auth.py
 app/schemas/pagos.py
 app/services/__init__.py
 app/services/pagos.py
+app/services/reportes.py
