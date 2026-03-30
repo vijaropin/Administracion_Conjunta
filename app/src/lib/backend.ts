@@ -75,3 +75,27 @@ export async function generarBackendPagos(params: {
     omitidosDuplicado: data.omitidos_duplicado ?? 0,
   };
 }
+
+export async function registrarBackendPago(params: {
+  pagoId: string;
+  metodoPago: string;
+  comprobanteUrl?: string;
+  fechaPago: string;
+}): Promise<void> {
+  const headers = await getAuthHeaders();
+  const url = `${getBackendBaseUrl()}/api/v1/pagos/${params.pagoId}/registrar-manual`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      metodoPago: params.metodoPago,
+      comprobanteUrl: params.comprobanteUrl ?? '',
+      fechaPago: params.fechaPago,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => null);
+    throw new Error(errorData?.detail || `Backend request failed with status ${response.status}`);
+  }
+}

@@ -47,3 +47,22 @@ class GenerarPagosResponse(BaseModel):
     omitidos_duplicado: int
     total_unidades: int
     total_conceptos: int
+
+
+class WebhookPagoRequest(BaseModel):
+    referencia_pago_id: str = Field(alias="referenciaPagoId", description="ID del pago en Firestore")
+    estado_transaccion: str = Field(alias="estadoTransaccion", description="Aprobado, Rechazado, Pendiente")
+    referencia_pasarela: str = Field(alias="referenciaPasarela", description="Referencia única de la pasarela")
+    metodo_pago: str = Field(alias="metodoPago", description="PSE, Nequi, Tarjeta")
+    fecha_transaccion: datetime = Field(alias="fechaTransaccion")
+
+
+class WebhookPagoResponse(BaseModel):
+    success: bool
+    mensaje: str
+
+
+class PagoManualRequest(BaseModel):
+    metodo_pago: str = Field(alias="metodoPago", description="Transferencia, Efectivo, Consignación")
+    comprobante_url: str = Field(alias="comprobanteUrl", description="URL del archivo adjunto")
+    fecha_pago: datetime = Field(alias="fechaPago")

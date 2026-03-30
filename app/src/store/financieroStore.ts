@@ -11,8 +11,9 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { db } from '@/config/firebase';
-import { fetchBackendPagos, generarBackendPagos } from '@/lib/backend';
+import { auth, db } from '@/config/firebase';
+import { fetchBackendPagos, generarBackendPagos, registrarBackendPago } from '@/lib/backend';
+import { duracionMs, iniciarMedicion, registrarLogTiempoRespuesta } from '@/lib/responseTimeLogger';
 import type { CajaMenor, ConceptoPagoConfig, GastoCajaMenor, Pago } from '@/types';
 
 interface FinancieroState {
@@ -246,6 +247,8 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
   },
 
   createPago: async (pago) => {
+    const inicio = iniciarMedicion();
+    const usuarioOperacion = auth.currentUser?.uid || pago.residenteId;
     set({ loading: true, error: null });
     try {
       const { pagos } = get();
@@ -264,9 +267,27 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
       const docRef = await addDoc(collection(db, 'pagos'), payload);
       const next = [{ id: docRef.id, ...payload }, ...pagos];
       set({ ...recalcPagosState(next), loading: false });
+      await registrarLogTiempoRespuesta({
+        conjuntoId: pago.conjuntoId,
+        usuarioId: usuarioOperacion,
+        modulo: 'pagos',
+        accion: 'crear_pago',
+        duracionMs: duracionMs(inicio),
+        estado: 'ok',
+        detalle: `Pago ${docRef.id} generado para unidad ${pago.unidadId}`,
+      });
       return docRef.id;
     } catch (error: any) {
       set({ error: error.message, loading: false });
+      await registrarLogTiempoRespuesta({
+        conjuntoId: pago.conjuntoId,
+        usuarioId: usuarioOperacion,
+        modulo: 'pagos',
+        accion: 'crear_pago',
+        duracionMs: duracionMs(inicio),
+        estado: 'error',
+        detalle: error?.message || 'Error no controlado al crear pago',
+      });
       throw error;
     }
   },
@@ -283,117 +304,51 @@ export const useFinancieroStore = create<FinancieroState>((set, get) => ({
   },
 
   registrarPago: async (id, metodoPago: string, registradoPor: string, comprobante?: string, fechaCruce?: Date) => {
+    const inicio = iniciarMedicion();
+    let conjuntoIdOperacion = '';
     set({ loading: true, error: null });
     try {
       const pago = get().pagos.find((p) => p.id === id);
       if (!pago) throw new Error('Pago no encontrado');
+      conjuntoIdOperacion = pago.conjuntoId;
       if (pago.estado === 'pagado') throw new Error('Este pago ya se encuentra registrado');
 
-      const fechaPago = fechaCruce ?? new Date();
-      const fechaPagoSolo = toDateOnly(fechaPago);
-      const mesPago = fechaPagoSolo.getMonth() + 1;
-      const anioPago = fechaPagoSolo.getFullYear();
+      const fechaPagoStr = (fechaCruce ?? new Date()).toISOString();
 
-      // Bloquear pago de cuotas futuras con base en la fecha real de pago/cruce.
-      if (pago.anio > anioPago || (pago.anio === anioPago && pago.mes > mesPago)) {
-        throw new Error('No se pueden pagar cuotas futuras');
-      }
-      const fechaPagoOportuno = pago.fechaVencimiento ? toDateOnly(pago.fechaVencimiento) : undefined;
-      const pagoDespuesFechaOportuna = fechaPagoOportuno
-        ? fechaPagoSolo.getTime() > fechaPagoOportuno.getTime()
-        : false;
-
-      let cuotaConfig: Record<string, unknown> | null = null;
-      if (isCuotaAdministracion(pago.concepto)) {
-        const conjuntoSnap = await getDoc(doc(db, 'conjuntos', pago.conjuntoId));
-        const rawConjunto = conjuntoSnap.data() as { cuotaAdministracion?: Record<string, unknown> } | undefined;
-        cuotaConfig = rawConjunto?.cuotaAdministracion ?? null;
-      }
-
-      const diaCorteConfig =
-        typeof cuotaConfig?.diaCorteMora === 'number'
-          ? Number(cuotaConfig.diaCorteMora)
-          : undefined;
-      const diaCorte = diaCorteConfig ?? pago.multaDiaCorte ?? fechaPagoOportuno?.getDate() ?? 16;
-      const diaPago = fechaPagoSolo.getDate();
-
-      let valorEsperado = pago.valor;
-      let valorOriginalCuota = pago.valorOriginalCuota ?? pago.valor;
-      let multaValor = 0;
-      let multaAplicable = false;
-
-      if (isCuotaAdministracion(pago.concepto)) {
-        const valorBaseFallback = pago.valorOriginalCuota ?? pago.valor;
-        const valorHastaDia16 =
-          pago.valorHastaDia16 ??
-          (typeof cuotaConfig?.valorHastaDia16 === 'number' ? Number(cuotaConfig.valorHastaDia16) : undefined) ??
-          valorBaseFallback;
-        const valorDesdeDia17 =
-          pago.valorDesdeDia17 ??
-          (typeof cuotaConfig?.valorDesdeDia17 === 'number' ? Number(cuotaConfig.valorDesdeDia17) : undefined) ??
-          valorHastaDia16;
-        const pagoTardio = fechaPagoOportuno ? pagoDespuesFechaOportuna : diaPago > diaCorte;
-
-        valorOriginalCuota = valorHastaDia16;
-        valorEsperado = pagoTardio ? valorDesdeDia17 : valorHastaDia16;
-        multaAplicable = pagoTardio;
-        multaValor = Math.max(0, valorDesdeDia17 - valorHastaDia16);
-      } else {
-        const tasa = pago.tasaInteresMoraMensual ?? 0;
-        const pagoTardio = fechaPagoOportuno ? pagoDespuesFechaOportuna : diaPago > diaCorte;
-        multaAplicable =
-          pagoTardio && (pago.aplicaInteresMora ?? false) && typeof tasa === 'number' && tasa > 0;
-        multaValor = multaAplicable ? valorOriginalCuota * (tasa / 100) : 0;
-        valorEsperado = multaAplicable ? valorOriginalCuota + multaValor : valorOriginalCuota;
-      }
-
-      const payloadRaw: Partial<Pago> & { estado: Pago['estado'] } = {
-        estado: 'pagado',
-        metodoPago: metodoPago as Pago['metodoPago'],
-        comprobante,
-        fechaPago,
-        valor: valorEsperado,
-        valorEsperadoPago: valorEsperado,
-        valorOriginalCuota,
-        multaDiaCorte: diaCorte,
-      };
-
-      // Evitar campos `undefined` en Firestore
-      const payload: Record<string, unknown> = {};
-      Object.entries(payloadRaw).forEach(([k, v]) => {
-        if (v !== undefined) payload[k] = v;
+      await registrarBackendPago({
+        pagoId: id,
+        metodoPago,
+        comprobanteUrl: comprobante,
+        fechaPago: fechaPagoStr
       });
 
-      if (multaAplicable && !pago.multaAplicada) {
-        payload.multaAplicada = true;
-        payload.multaValor = multaValor;
-        payload.multaFecha = fechaPago;
-      } else {
-        payload.multaAplicada = false;
-        payload.multaValor = 0;
-      }
+      // Refetch from backend/firebase to receive the updated state
+      await get().fetchPagos(conjuntoIdOperacion);
+      
+      set({ loading: false });
 
-      // Registrar quien efectuó el pago (historial)
-      payload.registradoPor = registradoPor;
-
-      await updateDoc(doc(db, 'pagos', id), payload);
-
-      await addDoc(collection(db, 'auditoriaFinanciera'), {
-        conjuntoId: pago.conjuntoId,
-        entidad: 'pago',
-        entidadId: id,
+      await registrarLogTiempoRespuesta({
+        conjuntoId: conjuntoIdOperacion,
+        usuarioId: registradoPor,
+        modulo: 'pagos',
         accion: 'registrar_pago',
-        actorId: registradoPor,
-        valorAnterior: pago.valor,
-        valorEsperado,
-        valorFinal: valorEsperado,
-        fecha: new Date(),
+        duracionMs: duracionMs(inicio),
+        estado: 'ok',
+        detalle: `Pago ${id} registrado por API Backend`,
       });
-
-      const next = get().pagos.map((p) => (p.id === id ? { ...p, ...payload } : p));
-      set({ ...recalcPagosState(next), loading: false });
     } catch (error: any) {
       set({ error: error.message, loading: false });
+      if (conjuntoIdOperacion) {
+        await registrarLogTiempoRespuesta({
+          conjuntoId: conjuntoIdOperacion,
+          usuarioId: registradoPor,
+          modulo: 'pagos',
+          accion: 'registrar_pago',
+          duracionMs: duracionMs(inicio),
+          estado: 'error',
+          detalle: error?.message || 'Error no controlado al registrar pago',
+        });
+      }
       throw error;
     }
   },

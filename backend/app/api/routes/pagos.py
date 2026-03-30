@@ -7,8 +7,16 @@ from app.schemas.pagos import (
     GenerarPagosResponse,
     PagoItem,
     PagosListResponse,
+    WebhookPagoRequest,
+    WebhookPagoResponse,
+    PagoManualRequest,
 )
-from app.services.pagos import generate_pagos, list_pagos_for_user
+from app.services.pagos import (
+    generate_pagos,
+    list_pagos_for_user,
+    procesar_webhook_pasarela,
+    registrar_pago_manual,
+)
 
 router = APIRouter(prefix="/pagos")
 
@@ -47,3 +55,31 @@ async def generar_cuotas(
         permitir_futuro=body.permitir_futuro,
     )
     return GenerarPagosResponse(**result)
+
+
+@router.post("/webhook", response_model=WebhookPagoResponse)
+async def webhook_pasarela(
+    body: WebhookPagoRequest,
+) -> WebhookPagoResponse:
+    """
+    Endpoint para ser consumido por la pasarela de pagos (PSE, Bancolombia, etc.)
+    para conciliar automáticamente el pago.
+    """
+    result = procesar_webhook_pasarela(payload=body)
+    return WebhookPagoResponse(**result)
+
+
+@router.post("/{pago_id}/registrar-manual")
+async def registrar_manual(
+    pago_id: str,
+    body: PagoManualRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> dict:
+    """
+    Endpoint para que un residente suba un comprobante de pago o el administrador concilie manualmente.
+    """
+    return registrar_pago_manual(
+        current_user=current_user,
+        pago_id=pago_id,
+        payload=body,
+    )

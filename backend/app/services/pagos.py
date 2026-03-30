@@ -6,8 +6,11 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.schemas.auth import AuthenticatedUser
 
+from app.schemas.pagos import WebhookPagoRequest, PagoManualRequest
+
 READ_ROLES = {"administrador", "consejo", "contadora", "residente"}
 GENERATE_ROLES = {"administrador"}
+UPDATE_ROLES = {"administrador", "contadora"}
 
 # ============================
 # Lectura de pagos existentes
@@ -190,3 +193,89 @@ def generate_pagos(
         "total_unidades": len(unidades),
         "total_conceptos": len(conceptos),
     }
+
+
+# ============================
+# Recaudo y Conciliación Automática
+# ============================
+
+
+def procesar_webhook_pasarela(payload: WebhookPagoRequest) -> dict:
+    """"""
+    # Este método procesa el evento del webhook (PSE, Nequi, ePayco, etc.)
+    # Y aplica el pago automáticamente si la transacción fue aprobada (Conciliación automática)
+    db = firestore.client()
+    doc_ref = db.collection("pagos").document(payload.referencia_pago_id)
+    doc_snap = doc_ref.get()
+
+    if not doc_snap.exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Referencia de pago no encontrada",
+        )
+
+    pago_data = doc_snap.to_dict() or {}
+    estado_actual = pago_data.get("estado")
+    if estado_actual == "pagado":
+        return {"success": True, "mensaje": "El pago ya se encuentra conciliado y pagado"}
+
+    estado_nuevo = "pendiente"
+    if payload.estado_transaccion.lower() == "aprobado":
+        estado_nuevo = "pagado"
+    elif payload.estado_transaccion.lower() == "rechazado":
+        estado_nuevo = "rechazado"
+
+    update_payload = {
+        "estado": estado_nuevo,
+        "metodoPago": payload.metodo_pago,
+        "referenciaPasarela": payload.referencia_pasarela,
+    }
+
+    if estado_nuevo == "pagado":
+        update_payload["fechaPago"] = payload.fecha_transaccion
+
+    doc_ref.update(update_payload)
+    return {"success": True, "mensaje": f"Pago marcado como {estado_nuevo}"}
+
+
+def registrar_pago_manual(
+    current_user: AuthenticatedUser,
+    pago_id: str,
+    payload: PagoManualRequest,
+) -> dict:
+    if current_user.tipo not in UPDATE_ROLES:
+        if current_user.tipo == "residente":
+            # Si es el residente, validamos que el pago sea suyo
+            db = firestore.client()
+            doc_snap = db.collection("pagos").document(pago_id).get()
+            if not doc_snap.exists or doc_snap.to_dict().get("residenteId") != current_user.uid:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Solo puedes registrar comprobantes a tus propios pagos"
+                )
+            # El residente lo marca en revisión
+            estado_nuevo = "en_revision"
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes permiso para registrar este pago"
+            )
+    else:
+        # Administrador o contadora lo marcan como pagado directamente si ellos lo suben?
+        # Normalmente también lo sube residente, o la admn lo concilia
+        estado_nuevo = "pagado"
+
+    db = firestore.client()
+    doc_ref = db.collection("pagos").document(pago_id)
+    
+    update_payload = {
+        "estado": estado_nuevo,
+        "metodoPago": payload.metodo_pago,
+        "comprobante": payload.comprobante_url,
+        "fechaPago": payload.fecha_pago,
+        "fechaActualizacion": datetime.now(timezone.utc)
+    }
+
+    doc_ref.update(update_payload)
+    
+    return {"success": True, "mensaje": f"Comprobante registrado con estado {estado_nuevo}"}
