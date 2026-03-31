@@ -302,6 +302,14 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ── Auditoría Legal Centralizada ──────────────────────────────────────────
+    // Colección append-only gestionada exclusivamente por el Backend (Admin SDK).
+    // El cliente NUNCA puede escribir, actualizar ni eliminar registros de auditoría.
+    match /auditoria/{id} {
+      allow read: if isActiveUser() && (isAdmin() || isConsejo() || isContadora());
+      allow create, update, delete: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
